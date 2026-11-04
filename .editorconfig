@@ -1,0 +1,26 @@
+# Android Kotlin Style Guide (Google): 4 spaces, 100 columns
+# Deviation: else, catch and finally start on a new line after the closing brace.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{kt,kts}]
+# if/else statements: braces may be omitted only when the body is a jump (return,
+# continue, break) or a plain assignment (=, +=, ...). Any method call needs braces.
+# if used as an expression (val x = if (...) a else b) needs no braces.
+# Not enforceable by .editorconfig or ktlint, so keep it by hand.
+max_line_length = 100
+ij_kotlin_allow_trailing_comma = true
+ij_kotlin_allow_trailing_comma_on_call_site = true
+ij_kotlin_catch_on_new_line = true
+ij_kotlin_finally_on_new_line = true
+ij_kotlin_else_on_new_line = true
+
+[*.md]
+trim_trailing_whitespace = false

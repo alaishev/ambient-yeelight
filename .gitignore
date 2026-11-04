@@ -1,0 +1,6 @@
+/.gradle
+/.codegraph
+local.properties
+/.kotlin
+/app/libs
+build/
