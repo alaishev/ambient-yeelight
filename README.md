@@ -1,93 +1,113 @@
-# Ambient Yeelight
+# Ambient YeeLight
 
+Амбиентная подсветка телевизора умными лампами и светодиодными лентами Xiaomi Yeelight.
+Приложение захватывает изображение с экрана, находит его доминирующий цвет и плавно передаёт
+его лампам по локальной сети, примерно три раза в секунду.
 
+- основная платформа — Android TV, на телефоне приложение тоже работает;
+- Android 9 и новее (`minSdk 28`);
+- лампы управляются напрямую по Wi-Fi, без облака Xiaomi и без приложения Yeelight.
 
-## Getting started
+## Что умеет
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+- **Поиск ламп** в локальной сети (SSDP, около 10 секунд) и добавление лампы вручную по IP-адресу.
+- **Список ламп сохраняется.** Повторный поиск не теряет выбранные лампы и лампы, добавленные
+  вручную. Если роутер выдал лампе новый адрес, она узнаётся по своему id.
+- **Статус лампы** («online» / «offline»): найдена поиском или ответила по TCP.
+- **Выбор ламп для подсветки** — переключатель у каждой лампы.
+- **Подсветка** включается переключателем «Ambient Light». Система спросит разрешение на запись
+  экрана, после чего подсветка работает в фоне, в foreground-сервисе с уведомлением.
+- **Music mode.** Если лампа его поддерживает, она сама подключается к приложению и принимает
+  цвета без ограничений по частоте. Если нет — работает обычное соединение с соблюдением лимитов
+  лампы.
+- **Состояние лампы возвращается.** При старте подсветки приложение запоминает, что лампа
+  показывала (питание, режим, цвет или цветовую температуру, яркость), и включает её. При
+  выключении подсветки возвращает всё как было; если лампа была выключена, снова выключает её.
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## Подготовка ламп
 
-## Add your files
+В приложении Yeelight для каждой лампы включите **«Управление по локальной сети»** (LAN Control).
+Без этого лампа не отвечает на поиск и не принимает команды. Телевизор и лампы должны быть в одной
+сети.
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+## Сборка
+
+Нужны JDK 17 или новее и Android SDK; путь к SDK — в `local.properties` (`sdk.dir=...`), Android
+Studio создаёт его сама.
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/arlaishev/ambient-yeelight.git
-git branch -M main
-git push -uf origin main
+./gradlew assembleDebug
 ```
 
-## Integrate with your tools
+APK: `app/build/outputs/apk/debug/app-debug.apk`. Установка на телевизор по сети (на ТВ должна быть
+включена отладка по сети в настройках разработчика):
 
-- [ ] [Set up project integrations](https://gitlab.com/arlaishev/ambient-yeelight/-/settings/integrations)
+```
+adb connect <адрес ТВ>:5555
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
 
-## Collaborate with your team
+## Первый запуск
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+1. Нажать кнопку поиска. Найденные лампы появятся в списке. Если лампа не нашлась (бывает, когда
+   роутер не пропускает multicast), добавить её кнопкой «+» по IP-адресу.
+2. Включить переключатель у ламп, которые должны участвовать в подсветке.
+3. Включить «Ambient Light» и разрешить запись экрана.
 
-## Test and Deploy
+При обновлении с версии 0.7 сохранённый список ламп не читается: формат хранения изменился. Нужно
+один раз нажать поиск и заново включить лампы.
 
-Use the built-in continuous integration in GitLab.
+## Как это работает
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+1. **Захват.** `ScreenRecorder` получает кадры экрана через MediaProjection, каждые 330 мс берёт
+   последний кадр и находит его доминирующий цвет (Palette).
+2. **Фильтр.** Цвет передаётся дальше, только если он заметно отличается от предыдущего (разница
+   ΔE по CIE76 больше 2.5), чтобы не отправлять лампам лишние команды.
+3. **Отправка.** У каждой лампы свой `LampController`. Цвета схлопываются: если новый цвет пришёл,
+   пока предыдущий ждёт отправки, уходит только новый. Смена цвета — плавная, 300 мс.
 
-***
+Ограничения ламп по спецификации Yeelight (`doc/Yeelight_Inter-Operation_Spec.pdf`):
 
-# Editing this README
+- не больше 60 команд в минуту на одно соединение — после 60 команд соединение открывается заново;
+- не больше 144 команд в минуту на лампу в сумме — команды идут не чаще раза в 330 мс; при долгой
+  динамичной сцене лампа может пропустить часть цветов;
+- в music mode этих ограничений нет.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Если связь с лампой пропала, соединение восстанавливается само при следующем цвете, не чаще раза в
+5 секунд.
 
-## Suggestions for a good README
+## Устройство
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+| Пакет | Что |
+|---|---|
+| `com.ambient.yeelight` | `AmbientLightApp`: общий журнал `logger`, запись падений в журнал |
+| `.network` | `Discovery` — поиск ламп; `Connection` — протокол поверх одного TCP-соединения; `Commands` — команды и формат строки; `LampController` — работа с одной лампой: сохранение и восстановление состояния, music mode, лимиты, переподключение; `Device`, `LampState` — данные |
+| `.service` | `AmbientService` — foreground-сервис подсветки; `ScreenRecorder` — захват экрана и цвет; `CIE76ColorDistanceCalculator` |
+| `.common` | `Settings` — сохранённые лампы; `Logger`; `Utils` |
+| `.ui` | `MainActivity`, `DeviceListAdapter` |
 
-## Name
-Choose a self-explaining name for your project.
+## Журнал
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+Приложение пишет в `files/logs/ambient_light.log` и в logcat. Файл начинается заново при 10 МБ.
+В debug-сборке пишутся и отладочные сообщения (например, ΔE каждого нового цвета), в release —
+начиная с INFO.
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+Посмотреть журнал на компьютере (debug-сборка):
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```
+adb shell run-as com.ambient.yeelight cat files/logs/ambient_light.log
+```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## Что ещё в работе
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+- захват экрана в уменьшенном размере и корректное освобождение ресурсов при остановке;
+- яркость лампы по яркости картинки, приглушение в тёмных сценах;
+- сервис: статус, обновление уведомления, изменения списка ламп без перезапуска подсветки;
+- интерфейс под пульт ТВ, экран настроек, экран журнала, баннер для лаунчера Android TV;
+- разные зоны экрана для разных ламп.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+Подробный план — в `PLAN.md`.
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## Лицензия
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT, см. `LICENSE`.

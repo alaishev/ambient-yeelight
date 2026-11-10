@@ -12,14 +12,12 @@ import android.media.projection.MediaProjectionManager
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import androidx.palette.graphics.Palette
-import com.ambient.yeelight.AmbientLightApp
+import com.ambient.yeelight.logger
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
-import java.io.FileOutputStream
 
 
 /**
@@ -29,9 +27,7 @@ import java.io.FileOutputStream
  * @param context           Application context
  * @param onChangeColorFunc Callback function called when dominant color was changed
  */
-class ScreenRecorder(private val context: Context, private val onChangeColorFunc: (color: Int, hsv: FloatArray) -> Unit) {
-    private var mLogger = AmbientLightApp.getAppLogger()
-
+class ScreenRecorder(private val context: Context, private val onChangeColorFunc: (color: Int) -> Unit) {
     private var job: Job = Job()
     private var scope = CoroutineScope(Dispatchers.IO)
 
@@ -53,14 +49,13 @@ class ScreenRecorder(private val context: Context, private val onChangeColorFunc
                 // Get next available image
                 val bitmap = getNextImage(imageReader) ?: continue
 
-                // Calculate dominant color and calculate HSV
+                // Calculate dominant color
                 val color = getDominantColor(bitmap)
-                val hsv = calculateHSV(color)
 
                 // Notify Listener if color was changed
                 if (colorChanged(color)) {
                     mLastColor = color
-                    onChangeColorFunc(color, hsv)
+                    onChangeColorFunc(color)
                 }
             }
         }
@@ -90,7 +85,7 @@ class ScreenRecorder(private val context: Context, private val onChangeColorFunc
 
         val mediaProjectionManager = context.getSystemService(MediaProjectionManager::class.java)
         val mediaProjection = mediaProjectionManager
-            .getMediaProjection(-1, data)
+            .getMediaProjection(-1, data) ?: throw IllegalStateException("No media projection")
         mediaProjection.createVirtualDisplay(
             "AmbientLightDisplay",
             width, height, dpi,
@@ -136,21 +131,6 @@ class ScreenRecorder(private val context: Context, private val onChangeColorFunc
     }
 
     /**
-     * Calculate Hue, Saturation and Brightness for Dominant Color
-     * @param color Dominant color of Image
-     * @return float array: hsv[0] --> hue, hsv[1] --> saturation, hsv[2] --> brightness
-     */
-    private fun calculateHSV(color: Int): FloatArray {
-
-        // RGB to HSV
-        val hsv = FloatArray(3)
-        Color.colorToHSV(color, hsv)
-        // TODO Do we need it? Check
-        hsv[0] = hsv[0] * 360f
-        return hsv
-    }
-
-    /**
      * Check if dominant color was changed significantly
      * @param color current dominant color
      * @return true if color was changed according to smooth rules
@@ -166,9 +146,8 @@ class ScreenRecorder(private val context: Context, private val onChangeColorFunc
             return true
         }
 
-        // Use on of possible algorithms for calculate color distance CIE76 / CIE94
         val deltaE = CIE76ColorDistanceCalculator.getColorDistance(color, mLastColor)
-        mLogger.logD(TAG, "Color = ${colorToHex(color)} / $color, deltaE = $deltaE")
+        logger.d(TAG, "Color = ${colorToHex(color)} / $color, deltaE = $deltaE")
 
         return (deltaE > 2.5)
 
@@ -184,28 +163,6 @@ class ScreenRecorder(private val context: Context, private val onChangeColorFunc
         val g = Color.green(color)
         val b = Color.blue(color)
         return Integer.toHexString(Color.rgb(r, g, b))
-    }
-
-    /**
-     * Save image to file (only for debugging)
-     * @param bitmap image converted to BitMap
-     * @param i
-     * @return
-     */
-    private fun saveToFile(bitmap: Bitmap, i: Int) {
-        try {
-            var file = context.getDir("Images", Context.MODE_PRIVATE)
-            file = File(file, "img$i.jpg")
-
-            val out = FileOutputStream(file)
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
-            out.flush()
-            out.close()
-            mLogger.logD(TAG, "Image $i saved.")
-        }
-        catch (e: Exception) {
-            mLogger.logE(TAG, "Failed to save image.")
-        }
     }
 
     companion object {

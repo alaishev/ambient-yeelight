@@ -14,46 +14,29 @@ import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
-import com.ambient.yeelight.AmbientLightApp
 import com.ambient.yeelight.R
-import com.ambient.yeelight.common.PreferenceManager
+import com.ambient.yeelight.common.Settings
+import com.ambient.yeelight.logger
+import com.ambient.yeelight.network.LampController
 import com.ambient.yeelight.ui.MainActivity
-import com.ambient.yeelight.yeelight.YeeLightDevice
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import org.json.JSONArray
 
 
 class AmbientService : Service() {
-    private var mLogger = AmbientLightApp.getAppLogger()
-
-    private lateinit var mYeeLightDevices: ArrayList<YeeLightDevice>
     private lateinit var mScreenRecorder: ScreenRecorder
-    private lateinit var mPrefs: PreferenceManager
+    private lateinit var settings: Settings
 
-    private var job: Job = Job()
-    private var scope = CoroutineScope(Dispatchers.IO)
+    @Volatile
+    private var lamps: List<LampController> = emptyList() // Read on the recorder's thread
 
-    override fun onBind(intent: Intent): IBinder {
-        TODO("Return the communication channel to the service.")
-    }
+    override fun onBind(intent: Intent): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        mLogger.logD(TAG, "Create Service")
-        mPrefs = PreferenceManager(this)
+        logger.d(TAG, "Create Service")
+        settings = Settings(this)
 
-        // Create staff
-        mYeeLightDevices = ArrayList()
-
-        mScreenRecorder = ScreenRecorder(this) { color: Int, _: FloatArray ->
-            for (device in mYeeLightDevices) {
-            job = scope.launch {
-                    device.setColor(color)
-                }
-            }
+        mScreenRecorder = ScreenRecorder(this) { color ->
+            lamps.forEach { it.setColor(color) }
         }
 
         showNotification("No devices are used to light")
@@ -61,7 +44,7 @@ class AmbientService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        mLogger.logD(TAG, "Destroy Service")
+        logger.d(TAG, "Destroy Service")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -83,7 +66,7 @@ class AmbientService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent) {
-        mLogger.logI(TAG, "App was swiped by user")
+        logger.i(TAG, "App was swiped by user")
         val restartServiceIntent = Intent(applicationContext, this.javaClass)
         restartServiceIntent.setPackage(packageName)
         var flags = PendingIntent.FLAG_ONE_SHOT
@@ -97,7 +80,7 @@ class AmbientService : Service() {
     }
 
     private fun showNotification(status: String) {
-        mLogger.logI(TAG, "Show notification: %s", status)
+        logger.i(TAG, "Show notification: $status")
         val notification: Notification
         val builder = Notification.Builder(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -142,71 +125,26 @@ class AmbientService : Service() {
     }
 
     private fun startAmbientLight(data: Intent, delay: Long) {
-        mLogger.logI(TAG, "Start ambient light")
+        logger.i(TAG, "Start ambient light")
         initializeDevices()
         mScreenRecorder.start(data, delay)
     }
 
     private fun stopAmbientLight() {
-        mLogger.logI(TAG, "Stop ambient light")
+        logger.i(TAG, "Stop ambient light")
         mScreenRecorder.stop()
+        lamps.forEach { it.stop() }
+        lamps = emptyList()
     }
 
     private fun initializeDevices() {
-        // 192.168.1.97 - colorb
-        // 192.168.1.237 - color
-        // 192.168.1.198 - lamp15
-        // 192.168.1.113 - stripe
-        // 192.168.1.103 - stripe6
-        val hosts = arrayOf("192.168.1.103", "192.168.1.237", "192.168.1.113")
-        val port = 55443
+        val used = settings.devices.filter { it.used }
 
-        job = scope.launch {
-            // Initialize devices which are chosen for ambient light
-            val devices = loadDevices()
-            for (device in devices) {
-                if (device.used) {
-                    job = scope.launch {
-                        try {
-                            // We want to check current status of device and it state
-                            device.initialize()
-                            mYeeLightDevices.add(device)
-                            mLogger.logD(TAG, "Initialized device with id = ${device.id}")
-                            showNotification("Using ${mYeeLightDevices.size} devices")
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                            mLogger.logE(TAG, "Initialize device error: ${e.message}")
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // TODO remove duplication
-    private fun loadDevices(): ArrayList<YeeLightDevice> {
-        val devices = ArrayList<YeeLightDevice>()
-
-        val str = mPrefs.getDevices()
-        if (str.isEmpty()) {
-            return devices
-        }
-
-        val deviceArray = JSONArray(str)
-        for (i in 0 until deviceArray.length()) {
-            val deviceObject = deviceArray.getJSONObject(i)
-
-            val id = deviceObject.optString("id")
-            val model = deviceObject.optString("model")
-            val name = deviceObject.optString("name")
-            val location = deviceObject.optString("location")
-            val used = deviceObject.optBoolean("used")
-
-            val device = YeeLightDevice(id, model, name, location, used)
-            devices.add(device)
-        }
-
-        return devices
+        lamps.forEach { it.close() }
+        lamps = used.map { LampController(it) }
+        lamps.forEach { it.start() }
+        logger.i(TAG, "Using ${used.size} devices: ${used.joinToString { it.host }}")
+        showNotification("Using ${lamps.size} devices")
     }
 
     companion object {
@@ -217,4 +155,4 @@ class AmbientService : Service() {
 
         private const val delay: Long = 330
     }
-}
+}

@@ -9,88 +9,50 @@ import android.widget.BaseAdapter
 import android.widget.Switch
 import android.widget.TextView
 import com.ambient.yeelight.R
-import com.ambient.yeelight.common.PreferenceManager
-import com.ambient.yeelight.yeelight.YeeLightDevice
-import org.json.JSONArray
+import com.ambient.yeelight.network.Device
 
+/**
+ * The lamps in the main screen's list, each with a switch for the ambient light.
+ *
+ * @param onUsedChange called when the user flips a lamp's switch
+ */
+class DeviceListAdapter(
+    context: Context,
+    private val onUsedChange: (device: Device, used: Boolean) -> Unit,
+) : BaseAdapter() {
+    private val inflater = LayoutInflater.from(context)
+    private var devices: List<Device> = emptyList()
+    private var online: Set<String> = emptySet() // Keys of the lamps that answer
 
-class DeviceListAdapter(context: Context, devices: ArrayList<YeeLightDevice>) : BaseAdapter() {
+    override fun getCount(): Int = devices.size
 
-    private var mDeviceList: ArrayList<YeeLightDevice>
-    private val mInflater: LayoutInflater
-    private val mLayoutResource: Int
-    private val mPrefs: PreferenceManager
+    override fun getItem(position: Int): Device = devices[position]
 
-    init {
-        mDeviceList = devices
-        mInflater = LayoutInflater.from(context)
-        mLayoutResource = R.layout.device_list_item
-        mPrefs = PreferenceManager(context)
-    }
-
-    override fun getCount(): Int {
-        return mDeviceList.size
-    }
-
-    override fun getItem(position: Int): Any {
-        return mDeviceList[position]
-    }
-
-    override fun getItemId(position: Int): Long {
-        return position.toLong()
-    }
+    override fun getItemId(position: Int): Long = position.toLong()
 
     @SuppressLint("SetTextI18n", "UseSwitchCompatOrMaterialCode")
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val device = getItem(position) as YeeLightDevice
-        val view: View = convertView ?: mInflater.inflate(mLayoutResource, parent, false)
+        val device = getItem(position)
+        val view = convertView ?: inflater.inflate(R.layout.device_list_item, parent, false)
+        val status = if (device.key in online) "online" else "offline"
+        val ambientSwitch = view.findViewById<Switch>(R.id.ambient_switch)
 
-        val textModel = view.findViewById<View>(R.id.device_model) as TextView
-        textModel.text = "Model: " + device.model
+        view.findViewById<TextView>(R.id.device_model).text = "Model: ${device.model}"
+        view.findViewById<TextView>(R.id.device_location).text = "Location: ${device.host}"
+        view.findViewById<TextView>(R.id.device_status).text = "Status: $status"
 
-        val textLocation = view.findViewById<View>(R.id.device_location) as TextView
-        textLocation.text = "Location: ${device.host}"
-
-        val textStatus = view.findViewById<View>(R.id.device_status) as TextView
-        textStatus.text = "Status: " + if (device.online) "online" else "offline"
-
-        val ambientSwitch = view.findViewById<View>(R.id.ambient_switch) as Switch
         ambientSwitch.isChecked = device.used
-
         ambientSwitch.setOnClickListener {
-            device.used = (it as Switch).isChecked
-            updatePrefs()
-            sendBroadcastMessage(device)
+            onUsedChange(device, ambientSwitch.isChecked)
         }
 
         return view
     }
 
-    /**
-     * Display new list of found/available devices in network
-     * @param devices new array with available devices
-     */
-    fun updateResults(devices: ArrayList<YeeLightDevice>) {
-        mDeviceList = devices
+    /** Shows [devices]; [online] holds the [Device.key]s of the lamps that answer. */
+    fun update(devices: List<Device>, online: Set<String>) {
+        this.devices = devices
+        this.online = online
         notifyDataSetChanged()
-    }
-
-    /**
-     * Save al listed devices information to shared preferences
-     */
-    private fun updatePrefs() {
-        val jsonArray = JSONArray()
-        for (deviceInfo in mDeviceList) {
-            jsonArray.put(deviceInfo.toJson())
-        }
-        mPrefs.setDevices(jsonArray.toString())
-    }
-
-    /**
-     * Send update to service for switch target device for using as ambient light
-     * @param device information about target device
-     */
-    private fun sendBroadcastMessage(device: YeeLightDevice) {
-        // TODO send broadcast to service for instant change
     }
 }

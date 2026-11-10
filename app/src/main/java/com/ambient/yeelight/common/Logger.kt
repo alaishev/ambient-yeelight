@@ -5,176 +5,131 @@ import android.util.Log
 import com.ambient.yeelight.BuildConfig
 import java.io.BufferedWriter
 import java.io.File
-import java.io.FileWriter
+import java.io.FileOutputStream
 import java.io.IOException
-import java.text.SimpleDateFormat
-import java.util.Calendar
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * @author Artem R. Laishev
- * Logger class, allows logging to internal log file
- * @param fullPath full path to log file (directory and file name)
+ * The app's logger; writes to logcat, a file, or both.
+ *
+ * The file is started anew once it reaches [MAX_SIZE], with the system info at its top.
+ *
+ * @param minLevel messages below it are dropped
+ * @param logcat write to logcat
+ * @param path the log file; null for no file
  */
-class Logger(fullPath: String) : ILogger {
-    private val mDateFormat = SimpleDateFormat("dd-MM-yyyy HH:mm:ss.SSS", Locale.US)
-    private var mSysInfo: String
-    private val mLogFile: File
-    private var mFileWriter: FileWriter? = null
-    private var mBufferedWriter: BufferedWriter? = null
+class Logger(
+    private val minLevel: Level = Level.INFO,
+    private val logcat: Boolean = true,
+    path: String? = null,
+) {
+    enum class Level { DEBUG, INFO, WARN, ERROR }
 
-    /**
-     * Initialization
-     */
+    private val file = path?.let(::File)
+    private val dateFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss.SSS", Locale.US)
+    private var writer: BufferedWriter? = null // Null if there is no file or it cannot be opened
+
+    private val sysInfo = buildString { // Written at the top of every new log file
+        appendLine("OS Version: ${System.getProperty("os.version")} (${Build.VERSION.INCREMENTAL})")
+        appendLine("OS API Level: ${Build.VERSION.SDK_INT}")
+        appendLine("Device: ${Build.DEVICE}")
+        appendLine("Model (and Product): ${Build.MODEL} (${Build.PRODUCT})")
+        append("App version: ${BuildConfig.VERSION_NAME}")
+    }
+
     init {
-        mSysInfo = "OS Version: " + System.getProperty("os.version") + "(" + Build.VERSION.INCREMENTAL + ")"
-        mSysInfo += "\nOS API Level: ${Build.VERSION.SDK_INT}"
-        mSysInfo += "\nDevice: ${Build.DEVICE}"
-        mSysInfo += "\nModel (and Product): ${Build.MODEL} (${Build.PRODUCT})"
-        mSysInfo += "\nJbagent version: ${BuildConfig.VERSION_NAME}"
-
-        mLogFile = File(fullPath)
-        createOrRewindLogFile()
+        if (file != null) {
+            open(file)
+        }
     }
 
-    /**
-     * Synchronized write message to log file
-     * @param level message level (See constants above)
-     * @param tag   class tag
-     * @param msg   message for writing
-     */
+    /** Logs a DEBUG message. Like [i], [w] and [e], drops it if it is below `minLevel`. */
+    fun d(tag: String, message: String) {
+        log(Level.DEBUG, tag, message, null)
+    }
+
+    /** Logs an INFO message. */
+    fun i(tag: String, message: String) {
+        log(Level.INFO, tag, message, null)
+    }
+
+    /** Logs a WARN message, with [throwable]'s stack trace if there is one. */
+    fun w(tag: String, message: String, throwable: Throwable? = null) {
+        log(Level.WARN, tag, message, throwable)
+    }
+
+    /** Logs an ERROR message, with [throwable]'s stack trace if there is one. */
+    fun e(tag: String, message: String, throwable: Throwable? = null) {
+        log(Level.ERROR, tag, message, throwable)
+    }
+
+    private fun log(level: Level, tag: String, message: String, throwable: Throwable?) {
+        if (level < minLevel) return
+
+        val trace = throwable?.stackTraceToString()
+
+        if (logcat) {
+            Log.println(priority(level), tag, if (trace == null) message else "$message\n$trace")
+        }
+
+        if (file != null) {
+            write(file, level, tag, message, trace)
+        }
+    }
+
+    /** Writes one entry to the file; starts a new file first if it is missing, empty or too big. */
     @Synchronized
-    private fun writeMsg(level: String, tag: String, msg: String) {
-        val thdId = Utils.padName(Thread.currentThread().name, 32)
-        logToLogcat(thdId, msg)
+    private fun write(file: File, level: Level, tag: String, message: String, trace: String?) {
+        val thread = Thread.currentThread().name.padEnd(28) // Fits "DefaultDispatcher-worker-12"
 
         try {
-            // Create new file or rewind and print system info
-            if (!mLogFile.exists() || mLogFile.length() >= LOG_SIZE || mLogFile.length() == 0L) {
-                createOrRewindLogFile()
-                mBufferedWriter?.append(mSysInfo)
-                mBufferedWriter?.newLine()
+            if (!file.exists() || file.length() == 0L || file.length() >= MAX_SIZE) {
+                open(file)
+                writer?.apply {
+                    append(sysInfo)
+                    newLine()
+                }
             }
 
-            // Get timestamp of message
-            val fDate = mDateFormat.format(Calendar.getInstance().time)
-            val str = String.format(Locale.US, "%s %s %s/%s: %s", fDate, thdId, level, tag, msg)
-            mBufferedWriter?.append(str)
-            mBufferedWriter?.newLine()
-            mBufferedWriter?.flush()
+            writer?.apply {
+                val time = dateFormat.format(LocalDateTime.now())
+
+                append("$time $thread ${level.name.first()}/$tag: $message")
+                newLine()
+                if (trace != null) {
+                    append(trace)
+                }
+                flush()
+            }
         }
         catch (e: IOException) {
-            e.printStackTrace()
+            Log.e(TAG, "Cannot write to ${file.absolutePath}", e)
         }
     }
 
-    /**
-     * Write message to logcat with debug information (thread id, function name, line number)
-     * @param thdId current thread id
-     * @param msg   message to write
-     */
-    private fun logToLogcat(thdId: String, msg: String) {
-        if (!BuildConfig.DEBUG)
-            return
-
-        val stackDepth = 4
-        val fullClassName = Thread.currentThread().stackTrace[stackDepth].className
-        var className = fullClassName.substring(fullClassName.lastIndexOf(".") + 1)
-        var methodName = Thread.currentThread().stackTrace[stackDepth].methodName
-
-        // Without these lines android logcat cannot show stack inside lambdas
-        if (className.contains("$"))
-            className = className.substring(className.indexOf("$") + 1)
-
-        if (methodName.contains("$")) {
-            methodName = methodName.substring(methodName.indexOf("$") + 1)
-            methodName = methodName.substring(0, methodName.indexOf("$"))
-        }
-
-        val lineNumber = Thread.currentThread().stackTrace[stackDepth].lineNumber
-        val tag = String.format(Locale.US, "[%s\\%s:%d]", className, methodName, lineNumber)
-
-        Log.d("$thdId $tag", msg)
-    }
-
-    /**
-     * Create new File and FileWriter for writing logs
-     */
-    private fun createOrRewindLogFile() {
+    /** Opens the file for appending, or truncates it if it is too big. */
+    private fun open(file: File) {
         try {
-            if (!mLogFile.createNewFile()) {
-                val msg = String.format(Locale.US, "Log file '%s' is already exists", mLogFile.absoluteFile.absolutePath)
-                if (BuildConfig.DEBUG)
-                    Log.d(TAG, msg)
-            }
-
-            mBufferedWriter?.close()
-            mFileWriter?.close()
-
-            mFileWriter = FileWriter(mLogFile, mLogFile.length() < LOG_SIZE)
-            mBufferedWriter = BufferedWriter(mFileWriter)
+            writer?.close()
+            writer = FileOutputStream(file, file.length() < MAX_SIZE).bufferedWriter()
         }
         catch (e: IOException) {
-            e.printStackTrace()
+            writer = null
+            Log.e(TAG, "Cannot open ${file.absolutePath}", e)
         }
-    }
-
-    /**
-     * Interface function for logging debug messages with format
-     * @param tag    class tag
-     * @param format format of message
-     * @param args   variable arguments for format
-     */
-    override fun logD(tag: String, format: String, vararg args: Any) {
-        if (!BuildConfig.DEBUG)
-            return
-
-        val msg = String.format(Locale.US, format, *args)
-        writeMsg(DEBUG, tag, msg)
-    }
-
-    /**
-     * Interface function for logging info messages with format
-     * @param tag    class tag
-     * @param format format of message
-     * @param args   variable arguments for format
-     */
-    override fun logI(tag: String, format: String, vararg args: Any) {
-        val msg = String.format(Locale.US, format, *args)
-        writeMsg(INFO, tag, msg)
-    }
-
-    /**
-     * Interface function for logging warning messages with format
-     * @param tag    class tag
-     * @param format format of message
-     * @param args   variable arguments for format
-     */
-    override fun logW(tag: String, format: String, vararg args: Any) {
-        val msg = String.format(Locale.US, format, *args)
-        writeMsg(WARN, tag, msg)
-    }
-
-    /**
-     * Interface function for logging error messages with format
-     * @param tag    class tag
-     * @param format format of message
-     * @param args   variable arguments for format
-     */
-    override fun logE(tag: String, format: String, vararg args: Any) {
-        val msg = String.format(Locale.US, format, *args)
-        writeMsg(ERROR, tag, msg)
     }
 
     companion object {
         private const val TAG = "Logger"
+        const val MAX_SIZE: Long = 10L * 1024 * 1024 // The log file's size limit, bytes
 
-        // Message levels
-        private const val DEBUG = "D"
-        private const val INFO = "I"
-        private const val WARN = "W"
-        private const val ERROR = "E"
-
-        const val LOG_SIZE = (10 * 1024 * 1024).toLong() // Maximum log file size
+        private fun priority(level: Level): Int = when (level) {
+            Level.DEBUG -> Log.DEBUG
+            Level.INFO -> Log.INFO
+            Level.WARN -> Log.WARN
+            Level.ERROR -> Log.ERROR
+        }
     }
 }

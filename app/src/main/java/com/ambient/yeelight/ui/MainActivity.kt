@@ -22,30 +22,28 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import com.ambient.yeelight.AmbientLightApp
-import com.ambient.yeelight.BuildConfig
 import com.ambient.yeelight.R
-import com.ambient.yeelight.common.ILogger
-import com.ambient.yeelight.common.PreferenceManager
+import com.ambient.yeelight.common.Settings
 import com.ambient.yeelight.common.Utils
+import com.ambient.yeelight.logger
+import com.ambient.yeelight.network.Device
+import com.ambient.yeelight.network.Discovery
+import com.ambient.yeelight.network.openConnection
 import com.ambient.yeelight.service.AmbientService
-import com.ambient.yeelight.yeelight.YeeLightDevice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import org.json.JSONArray
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
-import java.net.SocketTimeoutException
+import java.io.IOException
 
 
 class MainActivity : ComponentActivity() {
-    private lateinit var mLogger: ILogger
     private lateinit var mediaProjectionManager: MediaProjectionManager
     private lateinit var startMediaProjection: ActivityResultLauncher<Intent>
-    private lateinit var mPrefs: PreferenceManager
+    private lateinit var settings: Settings
 
     private var job: Job = Job()
     private var scope = CoroutineScope(Dispatchers.IO)
@@ -59,27 +57,14 @@ class MainActivity : ComponentActivity() {
     private lateinit var mBtnAdd: ImageButton
 
     private val MSG_DISCOVER_START = 1
-    private val MSG_DISCOVER_STOP = 2
     private val MSG_DISCOVER_FINISH = 3
     private val MSG_LOAD_FINISH = 4
     private val MSG_DEVICE_ADDED = 5
     private val MSG_FAILED_CONNECT = 6
     private val MSG_INVALID_INPUT = 7
 
-    private var mDevices = ArrayList<YeeLightDevice>()
-    private var mSearching = false
-
-    // Multicast udp address
-    private val UDP_HOST = "239.255.255.250"
-    private val UDP_PORT = 1982
-
-    // Searching message
-    private val MESSAGE = "M-SEARCH * HTTP/1.1\r\n" +
-            "HOST:239.255.255.250:1982\r\n" +
-            "MAN:\"ssdp:discover\"\r\n" +
-            "ST:wifi_bulb\r\n"
-
-    private val msg = MESSAGE.toByteArray()
+    private var mDevices: List<Device> = emptyList()
+    private var online: Set<String> = emptySet() // Keys of the lamps that answer
 
     private val mHandler: Handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
@@ -89,27 +74,22 @@ class MainActivity : ComponentActivity() {
                     scanningSpinner.visibility = View.VISIBLE
                     mBtnSearch.visibility = View.GONE
                     mBtnAdd.visibility = View.GONE
-                    mDeviceListAdapter.updateResults(ArrayList())
-                }
-
-                MSG_DISCOVER_STOP -> {
-                    mSearching = false
                 }
 
                 MSG_DISCOVER_FINISH -> {
                     scanningSpinner.visibility = View.GONE
                     mBtnSearch.visibility = View.VISIBLE
                     mBtnAdd.visibility = View.VISIBLE
-                    mDeviceListAdapter.updateResults(mDevices)
-                    showToast("Found ${mDevices.size} devices")
+                    mDeviceListAdapter.update(mDevices, online)
+                    showToast("Found ${msg.arg1} devices")
                 }
                 MSG_LOAD_FINISH -> {
-                    mDeviceListAdapter.updateResults(mDevices)
+                    mDeviceListAdapter.update(mDevices, online)
                     showToast("Load ${mDevices.size} devices")
                 }
 
                 MSG_DEVICE_ADDED -> {
-                    mDeviceListAdapter.updateResults(mDevices)
+                    mDeviceListAdapter.update(mDevices, online)
                     showToast("Device added")
                 }
 
@@ -127,21 +107,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        mLogger = AmbientLightApp.getAppLogger()
-        mPrefs = PreferenceManager(this)
-
-        // Load prefs
-        val version = mPrefs.getVersion()
-        if (version.isEmpty()) {
-            mPrefs.setVersion(BuildConfig.VERSION_NAME)
-        }
+        settings = Settings(this)
 
         // Get UI controls
         mAmbientSwitch = findViewById(R.id.ambientSwitch)
         scanningSpinner = findViewById(R.id.device_scan_progress)
         mDeviceListView = findViewById(R.id.deviceList)
         mBtnSearch = findViewById(R.id.btn_search)
-        mDeviceListAdapter = DeviceListAdapter(this, mDevices)
+        mDeviceListAdapter = DeviceListAdapter(this, onUsedChange = ::setUsed)
         mBtnAdd = findViewById(R.id.btn_add)
         mDeviceListView.adapter = mDeviceListAdapter
 
@@ -162,22 +135,20 @@ class MainActivity : ComponentActivity() {
 
         mBtnSearch.setOnClickListener {
             job = scope.launch {
-                mLogger.logI(TAG, "Searching devices...")
-
+                logger.i(TAG, "Searching devices...")
                 mHandler.sendEmptyMessage(MSG_DISCOVER_START)
-                mHandler.sendEmptyMessageDelayed(MSG_DISCOVER_STOP, 10000)
 
-                mDevices = searchDevices()
+                val found = Discovery().search()
+                val foundKeys = found.map { it.key }.toSet()
+                val devices = Discovery.merge(mDevices, found)
 
-                mHandler.sendEmptyMessage(MSG_DISCOVER_FINISH)
-
-                mLogger.logI(TAG, "Searching finished")
+                // Lamps added by hand may be out of the search's reach but still answer by TCP
+                online = foundKeys + probe(devices.filter { it.key !in foundKeys })
+                mDevices = devices
+                settings.devices = devices
+                mHandler.obtainMessage(MSG_DISCOVER_FINISH, found.size, 0).sendToTarget()
+                logger.i(TAG, "Searching finished: found ${found.size}, online ${online.size}")
             }
-        }
-
-        mDeviceListView.setOnItemClickListener { _, _, position, _ ->
-            val device = mDevices[position]
-            // TODO startControlActivity(device)
         }
 
         // Register MediaProjection permission request
@@ -186,7 +157,7 @@ class MainActivity : ComponentActivity() {
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
             val res = result.resultCode == RESULT_OK
-            mLogger.logI(AmbientLightApp.TAG, "MediaProjectionPermission=$res")
+            logger.i(TAG, "MediaProjectionPermission=$res")
 
             if (res) {
 
@@ -213,14 +184,7 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
 
-        saveDevices(mDevices)
-    }
-
-    private fun startControlActivity(host: String, port: Int) {
-        //TODO val intent = Intent(this@MainActivity, ControlActivity::class.java)
-        //TODO intent.putExtra("host", host)
-        //TODO intent.putExtra("port", port)
-        //TODO startActivity(intent)
+        settings.devices = mDevices
     }
 
     /**
@@ -228,7 +192,7 @@ class MainActivity : ComponentActivity() {
      * @param data Data intent after receive MediaProjection permission
      */
     private fun startAmbientService(data: Intent) {
-        mLogger.logI(AmbientLightApp.TAG, "Start Service")
+        logger.i(TAG, "Start Service")
         val intent = Intent(this, AmbientService::class.java)
         intent.action = "start"
         intent.putExtra("pData", data)
@@ -240,7 +204,7 @@ class MainActivity : ComponentActivity() {
      * Just stop Ambient service
      */
     private fun stopAmbientService() {
-        mLogger.logI(AmbientLightApp.TAG, "Stop Service")
+        logger.i(TAG, "Stop Service")
         val intent = Intent(this, AmbientService::class.java)
         intent.action = "stop"
         ContextCompat.startForegroundService(this, intent)
@@ -261,138 +225,39 @@ class MainActivity : ComponentActivity() {
         return false
     }
 
-    /**
-     * Load already stored devices in app preferences
-     * @return list saved YeeLight Devices
-     */
-    private fun loadDevices(): ArrayList<YeeLightDevice> {
-        val devices = ArrayList<YeeLightDevice>()
+    /** Reads the saved lamps; the ones that answer by TCP go to [online]. */
+    private suspend fun loadDevices(): List<Device> {
+        val devices = settings.devices
 
-        val str = mPrefs.getDevices()
-        if (str.isEmpty()) {
-            mLogger.logD(TAG, "No devices stored")
-            return devices
-        }
-
-        val deviceArray = JSONArray(str)
-        for (i in 0 until deviceArray.length()) {
-            val deviceObject = deviceArray.getJSONObject(i)
-
-            val id = deviceObject.optString("id")
-            val model = deviceObject.optString("model")
-            val name = deviceObject.optString("name")
-            val location = deviceObject.optString("location")
-            val used = deviceObject.optBoolean("used")
-
-            val device = YeeLightDevice(id, model, name, location, used)
-            device.initialize() // We want to check if loaded device is still online and get it state
-            devices.add(device)
-        }
-
+        online = probe(devices)
         return devices
     }
 
-    /**
-     * Save devices to app preferences
-     * @param devices List of Devices to save
-     */
-    private fun saveDevices(devices: ArrayList<YeeLightDevice>) {
-        val jsonArray = JSONArray()
-        for (deviceInfo in devices) {
-            jsonArray.put(deviceInfo.toJson())
-        }
-        mPrefs.setDevices(jsonArray.toString())
+    /** Asks all [devices] at once by TCP; returns the keys of the ones that answer. */
+    private suspend fun probe(devices: List<Device>): Set<String> = coroutineScope {
+        devices
+            .map { device -> async { device.key.takeIf { requestName(device) != null } } }
+            .awaitAll()
+            .filterNotNull()
+            .toSet()
     }
 
-    /**
-     *  Search for available devices in LAN
-     *  @return list with information about founded devices
-     */
-    private fun searchDevices(): ArrayList<YeeLightDevice> {
-        val devices = ArrayList<YeeLightDevice>()
-        val socket = DatagramSocket()
-
+    /** Asks [device] for its name over a connection of its own; null if it does not answer. */
+    private suspend fun requestName(device: Device): String? {
         try {
-            val packet = DatagramPacket(msg, msg.size, InetAddress.getByName(UDP_HOST), UDP_PORT)
-            socket.setSoTimeout(300)
-            socket.send(packet)
+            return openConnection(device).use { connection -> connection.requestName() }
         }
-        catch (e: Exception) {
-            e.printStackTrace()
-            mLogger.logE(TAG, "Sent M-SEARCH packet failed: ${e.message}")
-            return devices
+        catch (e: IOException) {
+            logger.w(TAG, "${device.host} does not answer -> $e")
+            return null
         }
-
-        mSearching = true
-        while (mSearching) {
-            val buf = ByteArray(1024)
-            val packet = DatagramPacket(buf, buf.size)
-
-            try {
-                socket.receive(packet)
-            }
-            catch (e: SocketTimeoutException) {
-                continue
-            }
-            catch (e: Exception) {
-                e.printStackTrace()
-                mLogger.logE(TAG, "Receive packet failed: ${e.message}")
-                return devices
-            }
-
-            // Bulb respond as HTTP, so convert it to String
-            val rsp = String(packet.data, 0, packet.length, Charsets.US_ASCII)
-            if (!rsp.contains("yeelight")) {
-                continue
-            }
-
-            try {
-                val device = createYeeLightDevice(rsp)
-
-                // Prevent duplication devices
-                if (!deviceInList(devices, device.host)) {
-                    devices.add(device)
-                    mLogger.logD(TAG, "Found device:\n$rsp")
-                }
-            }
-            catch (e: Exception) {
-                e.printStackTrace()
-                mLogger.logW(TAG, "Device creation error: ${e.message}")
-            }
-        }
-
-        return devices
     }
 
-    /**
-     * Parse device response and create device object
-     * @return device object
-     */
-    private fun createYeeLightDevice(rsp: String): YeeLightDevice {
-        // Split to Strings
-        val splitRsp =
-            rsp.split("\r\n".toRegex()).dropLastWhile { it.isEmpty() }
-
-        // Create Dictionary of field-value pairs
-        val bulbInfo = HashMap<String, String>()
-        for (str in splitRsp) {
-            val index = str.indexOf(":")
-
-            if (index != -1) {
-                val title = str.substring(0, index)
-                val value = str.substring(index + 2)
-                bulbInfo[title] = value
-            }
-        }
-
-        val id = get(bulbInfo, "id")
-        val model = get(bulbInfo, "model")
-        val name = get(bulbInfo, "name")
-        val location = get(bulbInfo, "Location")
-        val used = false // TODO get current state
-        val online = true
-
-        return YeeLightDevice(id, model, name, location, used, online)
+    /** Turns the ambient light on or off for [device] and saves the lamp list. */
+    private fun setUsed(device: Device, used: Boolean) {
+        mDevices = mDevices.map { if (it.key == device.key) it.copy(used = used) else it }
+        settings.devices = mDevices
+        mDeviceListAdapter.update(mDevices, online)
     }
 
     /**
@@ -435,21 +300,19 @@ class MainActivity : ComponentActivity() {
                 return@setOnClickListener
             }
 
-            val id = "0x0000000000000000"
-            val name = ""
-            val location = "yeelight://$host:55443"
+            val device = Device(null, model, "", host, used = true)
 
-            // Try to initialize device and add it to list
+            // Add the lamp only if it answers
             job = scope.launch {
-                val device = YeeLightDevice(id, model, name, location)
-                val res = device.initialize()
-                if (!res) {
+                val name = requestName(device)
+
+                if (name == null) {
                     mHandler.sendEmptyMessage(MSG_FAILED_CONNECT)
                     return@launch
                 }
 
-                device.used = true
-                mDevices.add(device)
+                mDevices = mDevices + device.copy(name = name)
+                online = online + device.key
                 mHandler.sendEmptyMessage(MSG_DEVICE_ADDED)
                 dialog.dismiss()
             }
@@ -462,7 +325,7 @@ class MainActivity : ComponentActivity() {
      * @param host host to search
      * @return true if device already found, false otherwise
      */
-    private fun deviceInList(devices: ArrayList<YeeLightDevice>, host: String): Boolean {
+    private fun deviceInList(devices: List<Device>, host: String): Boolean {
         for (device in devices) {
             if (device.host == host) {
                 return true
@@ -472,11 +335,7 @@ class MainActivity : ComponentActivity() {
         return false
     }
 
-    private fun get(bulbInfo: HashMap<String, String>, key: String): String {
-        return bulbInfo[key] ?: throw NoSuchElementException(key)
-    }
-
     companion object {
         private const val TAG = "MainActivity"
     }
-}
+}

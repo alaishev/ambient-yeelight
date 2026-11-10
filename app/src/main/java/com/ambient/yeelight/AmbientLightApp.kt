@@ -1,38 +1,47 @@
 package com.ambient.yeelight
 
 import android.app.Application
-import android.content.Context
-import com.ambient.yeelight.common.ILogger
 import com.ambient.yeelight.common.Logger
+import java.io.File
 
+/**
+ * The application class. Android creates it before any activity or service, so the log and the
+ * crash handler are set up here.
+ */
 class AmbientLightApp : Application() {
+
+    /** The log file. */
+    val logFile: File
+        get() = File(filesDir, "logs/ambient_light.log")
 
     override fun onCreate() {
         super.onCreate()
+        logFile.parentFile?.mkdirs()
 
-        mContext = this
+        val level = if (BuildConfig.DEBUG) Logger.Level.DEBUG else Logger.Level.INFO
 
-        mLogger = Logger("${filesDir!!.path}/$FILE_NAME")
-        mLogger.logI(TAG, "Starting Application v${BuildConfig.VERSION_NAME}")
+        logger = Logger(level, path = logFile.path)
+        logger.i(TAG, "Starting application v${BuildConfig.VERSION_NAME}")
+
+        // Write uncaught exceptions to the log file too: logcat is cleared quickly. Then pass
+        // the exception on to the system handler, which closes the app as usual.
+        val system = Thread.getDefaultUncaughtExceptionHandler()
+
+        Thread.setDefaultUncaughtExceptionHandler { thread, e ->
+            logger.e(TAG, "Crash on thread \"${thread.name}\"", e)
+            system?.uncaughtException(thread, e)
+        }
     }
 
-    override fun attachBaseContext(base: Context) {
-        super.attachBaseContext(base)
-    }
-
-    companion object {
-        fun getAppContext(): AmbientLightApp {
-            return mContext
-        }
-
-        fun getAppLogger(): ILogger {
-            return mLogger
-        }
-
-        private lateinit var mContext: AmbientLightApp
-        private lateinit var mLogger: ILogger
-
+    private companion object {
         const val TAG = "AmbientLightApp"
-        const val FILE_NAME = "ambient_light.log"
     }
 }
+
+/**
+ * The shared log of the app: logcat plus [AmbientLightApp.logFile]. Set up in
+ * [AmbientLightApp.onCreate], before any other code runs. There must be only one instance, since
+ * two loggers would open two writers to the same file. DEBUG messages go only to debug builds.
+ */
+lateinit var logger: Logger
+    private set
