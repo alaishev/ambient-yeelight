@@ -1,9 +1,7 @@
 package com.ambient.yeelight.ui
 
 import android.annotation.SuppressLint
-import android.app.ActivityManager
 import android.app.AlertDialog
-import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
@@ -21,7 +19,9 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.ambient.yeelight.R
 import com.ambient.yeelight.common.Settings
 import com.ambient.yeelight.common.Utils
@@ -30,6 +30,7 @@ import com.ambient.yeelight.network.Device
 import com.ambient.yeelight.network.Discovery
 import com.ambient.yeelight.network.openConnection
 import com.ambient.yeelight.service.AmbientService
+import com.ambient.yeelight.service.AmbientState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -166,13 +167,19 @@ class MainActivity : ComponentActivity() {
 
             mAmbientSwitch.isChecked = (result.resultCode == RESULT_OK)
         }
+
+        // The switch follows the service, also when the system stops the capture
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                AmbientService.state.collect { state ->
+                    mAmbientSwitch.isChecked = state == AmbientState.RUNNING
+                }
+            }
+        }
     }
 
     override fun onStart() {
         super.onStart()
-
-        // Update UI
-        mAmbientSwitch.isChecked = serviceIsRunning(this, AmbientService::class.java.name)
 
         // Load and display saved devices
         job = scope.launch {
@@ -193,10 +200,7 @@ class MainActivity : ComponentActivity() {
      */
     private fun startAmbientService(data: Intent) {
         logger.i(TAG, "Start Service")
-        val intent = Intent(this, AmbientService::class.java)
-        intent.action = "start"
-        intent.putExtra("pData", data)
-        ContextCompat.startForegroundService(this, intent)
+        AmbientService.start(this, data)
         showToast("Service is started")
     }
 
@@ -205,24 +209,8 @@ class MainActivity : ComponentActivity() {
      */
     private fun stopAmbientService() {
         logger.i(TAG, "Stop Service")
-        val intent = Intent(this, AmbientService::class.java)
-        intent.action = "stop"
-        ContextCompat.startForegroundService(this, intent)
+        AmbientService.stop(this)
         showToast("Service is stopped")
-    }
-
-    /**
-     * Check that Ambient Service is already running
-     * @param context application context
-     * @param serviceName name of service
-     * @return result of checking
-     */
-    private fun serviceIsRunning(context: Context, serviceName: String): Boolean {
-        val manager =
-            context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        for (service in manager.getRunningServices(Int.MAX_VALUE))
-            if (serviceName == service.service.className) return true
-        return false
     }
 
     /** Reads the saved lamps; the ones that answer by TCP go to [online]. */
@@ -236,16 +224,16 @@ class MainActivity : ComponentActivity() {
     /** Asks all [devices] at once by TCP; returns the keys of the ones that answer. */
     private suspend fun probe(devices: List<Device>): Set<String> = coroutineScope {
         devices
-            .map { device -> async { device.key.takeIf { requestName(device) != null } } }
+            .map { device -> async { device.key.takeIf { requestDevice(device) != null } } }
             .awaitAll()
             .filterNotNull()
             .toSet()
     }
 
-    /** Asks [device] for its name over a connection of its own; null if it does not answer. */
-    private suspend fun requestName(device: Device): String? {
+    /** Asks [device] about itself over a connection of its own; null if it does not answer. */
+    private suspend fun requestDevice(device: Device): Device? {
         try {
-            return openConnection(device).use { connection -> connection.requestName() }
+            return openConnection(device).use { connection -> connection.requestDevice() }
         }
         catch (e: IOException) {
             logger.w(TAG, "${device.host} does not answer -> $e")
@@ -302,17 +290,23 @@ class MainActivity : ComponentActivity() {
 
             val device = Device(null, model, "", host, used = true)
 
-            // Add the lamp only if it answers
+            // Add the lamp only if it answers by TCP; the direct search request, if the lamp
+            // answers it too, gives its id, model and music mode support
             job = scope.launch {
-                val name = requestName(device)
+                val request = async { Discovery().request(host) }
+                val answered = requestDevice(device)
+                val found = request.await()
 
-                if (name == null) {
+                if (answered == null) {
                     mHandler.sendEmptyMessage(MSG_FAILED_CONNECT)
                     return@launch
                 }
 
-                mDevices = mDevices + device.copy(name = name)
-                online = online + device.key
+                val added = found?.copy(used = true) ?: answered
+
+                mDevices = Discovery.merge(mDevices, listOf(added))
+                settings.devices = mDevices
+                online = online + added.key
                 mHandler.sendEmptyMessage(MSG_DEVICE_ADDED)
                 dialog.dismiss()
             }

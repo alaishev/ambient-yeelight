@@ -15,6 +15,7 @@ import java.net.SocketTimeoutException
 /**
  * Finds Yeelight lamps in the LAN: sends an SSDP M-SEARCH to the lamps' multicast group and
  * collects the answers. The lamps answer straight to our socket, so no multicast lock is needed.
+ * [request] asks one lamp the same way, at its address.
  */
 class Discovery {
 
@@ -33,6 +34,22 @@ class Discovery {
         }
 
         found.values.toList()
+    }
+
+    /**
+     * Asks the lamp at [host] directly, for a lamp the search does not reach: a router may drop
+     * multicast but pass a datagram to one address. The lamp answers as it does to the search.
+     * Returns null if it does not answer within about [REQUEST_COUNT] × [ANSWER_TIMEOUT_MS]. Runs
+     * on the IO dispatcher.
+     */
+    suspend fun request(host: String): Device? = withContext(Dispatchers.IO) {
+        try {
+            DatagramSocket().use { socket -> receiveAnswer(socket, InetAddress.getByName(host)) }
+        }
+        catch (e: IOException) {
+            logger.e(TAG, "$host: request failed -> $e")
+            null
+        }
     }
 
     /** Sends the request [REQUEST_COUNT] times and reads the answers until [DURATION_MS] pass. */
@@ -71,6 +88,34 @@ class Discovery {
                 logger.i(TAG, "Found $device")
             }
         }
+    }
+
+    /** Sends the request to [address] up to [REQUEST_COUNT] times; returns the lamp that answers. */
+    private suspend fun receiveAnswer(socket: DatagramSocket, address: InetAddress): Device? {
+        val request = DatagramPacket(REQUEST, REQUEST.size, address, PORT)
+
+        socket.soTimeout = ANSWER_TIMEOUT_MS
+        for (attempt in 1..REQUEST_COUNT) {
+            currentCoroutineContext().ensureActive()
+            socket.send(request)
+
+            val packet = DatagramPacket(ByteArray(ANSWER_SIZE), ANSWER_SIZE)
+
+            try {
+                socket.receive(packet)
+            }
+            catch (e: SocketTimeoutException) {
+                continue
+            }
+
+            val device = parse(String(packet.data, 0, packet.length, Charsets.US_ASCII))
+
+            if (device != null) {
+                logger.i(TAG, "${address.hostAddress} answered: $device")
+                return device
+            }
+        }
+        return null
     }
 
     /**
@@ -129,6 +174,7 @@ class Discovery {
         private const val REQUEST_COUNT = 3 // UDP can lose a request, so it is sent again
         private const val REQUEST_INTERVAL_MS = 1_000L
         private const val RECEIVE_TIMEOUT_MS = 300 // How often the loop resends and checks the end
+        private const val ANSWER_TIMEOUT_MS = 700 // How long request() waits for each answer
         private const val ANSWER_SIZE = 1024 // Bytes; a lamp's answer is about 500
 
         private val REQUEST = listOf(

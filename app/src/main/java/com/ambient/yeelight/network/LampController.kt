@@ -26,8 +26,8 @@ import java.net.SocketTimeoutException
  * limit; if music mode fails, the controller keeps to usual connections. A usual connection is
  * opened anew once it has sent [Connection.MAX_COMMANDS], the lamp's limit for one connection.
  *
- * [start] and [stop] do their work in the background, one after the other; all the methods can be
- * called from any thread.
+ * [start] works in the background; [stop] suspends until the lamp has its state back. All the
+ * methods can be called from any thread.
  */
 class LampController(val device: Device) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -64,17 +64,15 @@ class LampController(val device: Device) {
     }
 
     /**
-     * Ends the ambient light, in the background: a waiting color still goes, then the lamp leaves
-     * music mode, gets back what it showed before [start], and the connection closes.
+     * Ends the ambient light and returns when it is done: a waiting color still goes, then the
+     * lamp leaves music mode, gets back what it showed before [start], and the connection closes.
      */
-    fun stop() {
+    suspend fun stop() {
         colors.close()
-        scope.launch {
-            colorSender?.join()
-            stopMusicMode()
-            restoreState()
-            close()
-        }
+        colorSender?.join()
+        stopMusicMode()
+        restoreState()
+        close()
     }
 
     /** Closes the connection at once, leaving the lamp as it is now. */
@@ -242,7 +240,7 @@ class LampController(val device: Device) {
         // Up to 3 colors a second, as often as the screen is captured; more makes no visible
         // difference. On a usual connection a lamp takes 144 commands per minute (Yeelight
         // Inter-Operation Specification), so a long run of color changes may lose a few there;
-        // the color filter in ScreenRecorder makes it rare
+        // the color filter in ColorExtractor makes it rare
         const val COMMAND_INTERVAL_MS = 330L
         const val TRANSITION_MS = 300 // How long a lamp fades to a new color
         const val FADE_MS = 500 // How long a lamp fades on start and when its state comes back

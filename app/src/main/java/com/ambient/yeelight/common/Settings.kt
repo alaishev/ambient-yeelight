@@ -1,6 +1,7 @@
 package com.ambient.yeelight.common
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.core.content.edit
 import com.ambient.yeelight.logger
 import com.ambient.yeelight.network.Device
@@ -10,6 +11,9 @@ import org.json.JSONException
 /** The app's stored settings: the lamp list, later also the ambient light parameters. */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+
+    // Kept here: SharedPreferences holds its listeners by weak references only
+    private var devicesListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     /**
      * The saved lamps, in the order the user sees them. Empty if nothing is saved yet or the
@@ -22,6 +26,30 @@ class Settings(context: Context) {
 
             prefs.edit { putString(KEY_DEVICES, json.toString()) }
         }
+
+    /**
+     * Calls [onChange] on the main thread each time a changed lamp list is saved, by this or
+     * another [Settings], until [stopListening]. A new call replaces the listener.
+     */
+    fun listenToDevices(onChange: () -> Unit) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_DEVICES) {
+                onChange()
+            }
+        }
+
+        stopListening()
+        devicesListener = listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    /** Stops the calls set by [listenToDevices]. */
+    fun stopListening() {
+        val listener = devicesListener ?: return
+
+        prefs.unregisterOnSharedPreferenceChangeListener(listener)
+        devicesListener = null
+    }
 
     private fun readDevices(text: String?): List<Device> {
         if (text == null) return emptyList()

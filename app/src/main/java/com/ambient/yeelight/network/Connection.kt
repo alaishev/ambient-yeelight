@@ -91,9 +91,16 @@ class Connection(
         return result
     }
 
-    /** Asks the lamp for its name, which may be empty; null if it does not reply. */
-    suspend fun requestName(): String? {
-        return sendRequest(Commands.GET_PROP, listOf("name"))?.optString(0)
+    /**
+     * Asks the lamp about itself; returns [device] with the lamp's name, which may be empty, and
+     * music mode support. Null if the lamp does not reply. A lamp answers an unknown property with
+     * an empty string (Yeelight Inter-Operation Specification), so an empty `music_on` means the
+     * lamp has no music mode.
+     */
+    suspend fun requestDevice(): Device? {
+        val props = sendRequest(Commands.GET_PROP, DEVICE_PROPS) ?: return null
+
+        return device.copy(name = props.optString(0), musicMode = props.optString(1).isNotEmpty())
     }
 
     /** Closes the socket, which also stops the reader. */
@@ -176,6 +183,7 @@ class Connection(
 
         private const val TAG = "Connection"
         private const val REPLY_TIMEOUT_MS = 2_000L
+        private val DEVICE_PROPS = listOf("name", "music_on") // In the order requestDevice() reads
     }
 }
 
