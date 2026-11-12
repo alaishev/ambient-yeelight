@@ -4,13 +4,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The lamp's commands, by the Yeelight Inter-Operation Specification.
+ * The lamp commands we use, from the Yeelight Inter-Operation Specification.
  *
- * A command is one line of JSON ended by [LINE_END], with an id the caller picks:
- * `{"id":1,"method":"set_rgb","params":[16711680,"smooth",300]}`. The lamp replies with a line
- * with the same id, `{"id":1,"result":["ok"]}` or `{"id":1,"error":{"code":-1,"message":"..."}}`;
- * a line without an id is a notification of the lamp's new state. In music mode the lamp does not
- * reply at all.
+ * A command is one line of JSON with an id we pick:
+ * `{"id":1,"method":"set_rgb","params":[16711680,"smooth",300]}`. The lamp answers with a line
+ * that has the same id: `{"id":1,"result":["ok"]}`, or `{"id":1,"error":{...}}` if it refuses.
+ * A line without an id is the lamp telling us its new state. In music mode the lamp doesn't
+ * answer at all.
  */
 object Commands {
     const val GET_PROP = "get_prop" // Params: names of the properties to read
@@ -23,14 +23,14 @@ object Commands {
 
     const val SMOOTH = "smooth" // The effect: change gradually over the duration, in ms
     const val LINE_END = "\r\n" // Ends every command and reply
+}
 
-    /** Creates the line to send for command [id]: [method] with [params], ended by [LINE_END]. */
-    fun create(id: Int, method: String, params: List<Any>): String {
-        val json = JSONObject()
-            .put("id", id)
-            .put("method", method)
-            .put("params", JSONArray(params))
+/** Makes the line to send: the command with this id, method and params, ended by LINE_END. */
+fun createCommand(id: Int, method: String, params: List<Any>): String {
+    val json = JSONObject()
+        .put("id", id)
+        .put("method", method)
+        .put("params", JSONArray(params))
 
-        return "$json$LINE_END"
-    }
+    return "$json${Commands.LINE_END}"
 }

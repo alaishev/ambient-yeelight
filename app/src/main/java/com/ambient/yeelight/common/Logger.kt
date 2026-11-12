@@ -12,27 +12,31 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /**
- * The app's logger; writes to logcat, a file, or both.
+ * The app's log. Every message goes to the log file, and to logcat if it's on.
  *
- * Once the file reaches MAX_SIZE, it becomes the previous file, its name with ".1", in place of
- * the older one, and a new file starts. Each new file has the system info at its top.
+ * The file grows up to MAX_FILE_SIZE. Then it's renamed to "<name>.1" (the old ".1" file is
+ * replaced) and a new file starts, so the log keeps the latest 2 to 4 MB. Each new file begins
+ * with a few lines about the device and the app version.
  *
- * @param minLevel messages below it are dropped
- * @param logcat write to logcat
- * @param path the log file; null for no file
+ * Can be used from any thread.
+ *
+ * @param minLevel messages below this level are skipped
+ * @param logcat also write the messages to logcat
+ * @param file where the log is written
  */
 class Logger(
-    private val minLevel: Level = Level.INFO,
-    private val logcat: Boolean = true,
-    path: String? = null,
+    private val minLevel: Level,
+    private val logcat: Boolean,
+    private val file: File,
 ) {
     enum class Level { DEBUG, INFO, WARN, ERROR }
 
-    private val file = path?.let(::File)
-    private val dateFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss.SSS", Locale.US)
-    private var writer: BufferedWriter? = null // Null if there is no file or it cannot be opened
+    private val previousFile = File("${file.path}.1")
+    private val timeFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss.SSS", Locale.US)
+    private var writer: BufferedWriter? = null // Null if the file can't be opened
 
-    private val sysInfo = buildString { // Written at the top of every new log file
+    // Written at the top of every new log file
+    private val systemInfo = buildString {
         appendLine("OS Version: ${System.getProperty("os.version")} (${Build.VERSION.INCREMENTAL})")
         appendLine("OS API Level: ${Build.VERSION.SDK_INT}")
         appendLine("Device: ${Build.DEVICE}")
@@ -40,21 +44,15 @@ class Logger(
         append("App version: ${BuildConfig.VERSION_NAME}")
     }
 
-    /** The log files that exist, the previous one first: for saving or sending them. */
+    /** The log files that exist, the older one first. For saving or sending the log. */
     val files: List<File>
-        get() {
-            val file = file ?: return emptyList()
-
-            return listOf(previousFile(file), file).filter { it.exists() }
-        }
+        get() = listOf(previousFile, file).filter { it.exists() }
 
     init {
-        if (file != null) {
-            open(file)
-        }
+        open()
     }
 
-    /** Logs a DEBUG message. Like [i], [w] and [e], drops it if it is below `minLevel`. */
+    /** Logs a DEBUG message. Like the other levels, it's skipped if it's below minLevel. */
     fun d(tag: String, message: String) {
         log(Level.DEBUG, tag, message, null)
     }
@@ -64,24 +62,22 @@ class Logger(
         log(Level.INFO, tag, message, null)
     }
 
-    /** Logs a WARN message, with [throwable]'s stack trace if there is one. */
+    /** Logs a WARN message, with the stack trace of throwable if there is one. */
     fun w(tag: String, message: String, throwable: Throwable? = null) {
         log(Level.WARN, tag, message, throwable)
     }
 
-    /** Logs an ERROR message, with [throwable]'s stack trace if there is one. */
+    /** Logs an ERROR message, with the stack trace of throwable if there is one. */
     fun e(tag: String, message: String, throwable: Throwable? = null) {
         log(Level.ERROR, tag, message, throwable)
     }
 
-    /** Deletes both log files; the next message starts a new one. */
+    /** Deletes both log files. The next message starts a new file. */
     @Synchronized
     fun clear() {
-        val file = file ?: return
-
         writer?.close()
         writer = null
-        previousFile(file).delete()
+        previousFile.delete()
         file.delete()
     }
 
@@ -91,44 +87,40 @@ class Logger(
         val trace = throwable?.stackTraceToString()
 
         if (logcat) {
-            Log.println(priority(level), tag, if (trace == null) message else "$message\n$trace")
+            Log.println(toPriority(level), tag, if (trace == null) message else "$message\n$trace")
         }
-
-        if (file != null) {
-            write(file, level, tag, message, trace)
-        }
+        write(level, tag, message, trace)
     }
 
     /**
-     * Writes one entry to the file. A full file becomes the previous one first; a missing or empty
-     * file gets the system info at its top.
+     * Writes one message to the file. A full file becomes the previous one first. A new file gets
+     * the system info at its top.
      */
     @Synchronized
-    private fun write(file: File, level: Level, tag: String, message: String, trace: String?) {
-        val thread = Thread.currentThread().name.padEnd(28) // Fits "DefaultDispatcher-worker-12"
+    private fun write(level: Level, tag: String, message: String, trace: String?) {
+        // Padded, so the messages line up; our longest thread name is "DefaultDispatcher-worker-12"
+        val thread = Thread.currentThread().name.padEnd(28)
 
         try {
-            if (file.length() >= MAX_SIZE) {
+            if (file.length() >= MAX_FILE_SIZE) {
                 writer?.close()
-                // Replaces the older previous file; if the rename fails, the history is dropped
-                if (!file.renameTo(previousFile(file))) {
+                // Replaces the old previous file. If renaming fails, the full file is just dropped
+                if (!file.renameTo(previousFile)) {
                     file.delete()
                 }
             }
 
             if (!file.exists() || file.length() == 0L) {
-                open(file)
+                open()
                 writer?.apply {
-                    append(sysInfo)
-                    newLine()
+                    appendLine(systemInfo)
                 }
             }
 
             writer?.apply {
-                val time = dateFormat.format(LocalDateTime.now())
+                val time = timeFormat.format(LocalDateTime.now())
 
-                append("$time $thread ${level.name.first()}/$tag: $message")
-                newLine()
+                appendLine("$time $thread ${level.name.first()}/$tag: $message")
                 if (trace != null) {
                     append(trace)
                 }
@@ -140,8 +132,8 @@ class Logger(
         }
     }
 
-    /** Opens the file for appending. */
-    private fun open(file: File) {
+    /** Opens the file to add to its end. */
+    private fun open() {
         try {
             writer?.close()
             writer = FileOutputStream(file, true).bufferedWriter()
@@ -152,17 +144,15 @@ class Logger(
         }
     }
 
-    private fun previousFile(file: File): File = File("${file.path}.1")
+    private fun toPriority(level: Level): Int = when (level) {
+        Level.DEBUG -> Log.DEBUG
+        Level.INFO -> Log.INFO
+        Level.WARN -> Log.WARN
+        Level.ERROR -> Log.ERROR
+    }
 
-    companion object {
-        private const val TAG = "Logger"
-        const val MAX_SIZE: Long = 2L * 1024 * 1024 // One log file's size limit, bytes
-
-        private fun priority(level: Level): Int = when (level) {
-            Level.DEBUG -> Log.DEBUG
-            Level.INFO -> Log.INFO
-            Level.WARN -> Log.WARN
-            Level.ERROR -> Log.ERROR
-        }
+    private companion object {
+        const val TAG = "Logger"
+        const val MAX_FILE_SIZE = 2L * 1024 * 1024 // Bytes
     }
 }

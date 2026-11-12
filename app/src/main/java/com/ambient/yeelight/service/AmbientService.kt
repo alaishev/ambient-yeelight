@@ -34,34 +34,38 @@ import kotlinx.coroutines.sync.withLock
 /** What the ambient light is doing, for the main screen. */
 enum class AmbientState {
     STOPPED, // Not running: stopped, or never started
-    RUNNING, // Capturing the screen and setting the lamps' colors
-    FAILED, // Could not start: the permission to capture the screen did not work
+    RUNNING, // Capturing the screen and sending colors to the lamps
+    FAILED, // Couldn't start: the screen capture didn't work
 }
 
 /**
- * The foreground service of the ambient light: captures the screen, finds its color and sets it
- * on the lamps chosen in the settings, following the changes of that choice while it runs.
+ * The ambient light itself, as a foreground service. Captures the screen, finds its main color
+ * and sends it to the lamps that are enabled in the list. If the list changes while the light is
+ * on, the lamps follow at once.
  *
- * Started by [start] with the user's permission to capture the screen; stopped by [stop], by the
- * button in its notification, or when the system ends the capture. On stop the lamps get back
- * what they showed before. The service is not restarted after the system kills it: the permission
- * lives only in memory, so the user has to start the light again.
+ * start() runs it with the permission from the capture dialog. It stops by stop(), by the button
+ * in its notification, or when the system ends the capture. On stop the lamps get back what they
+ * showed before. If the system kills the service, it doesn't come back by itself: the capture
+ * permission lives only in memory, so the user has to turn the light on again.
  */
 class AmbientService : Service() {
     private lateinit var settings: Settings
     private lateinit var capture: ScreenCapture
-    // Made when the light starts, then used on the capture's thread only
+    // Made when the light starts; after that only the capture thread uses it
     private lateinit var colorExtractor: ColorExtractor
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private val lampsLock = Mutex() // One updateLamps() at a time
+    private val lampsLock = Mutex() // Lets only one updateLamps() or stop run at a time
 
     @Volatile
-    private var lamps: List<LampController> = emptyList() // Set on the main thread
+    private var lamps: List<LampController> = emptyList() // Changed on the main thread only
 
+    // The last color sent to the lamps. A lamp added while the light is on starts with this
+    // color, so it doesn't wait for the next change. Written on the capture thread
     @Volatile
-    private var lastColor: Int? = null // Set on the capture's thread; new lamps start with it
+    private var lastColor: Int? = null
 
-    // Read from the settings when the light starts; a change waits for the next start
+    // Read from the settings when the light starts. A change in the settings waits for the next
+    // start, so all the lamps of one run work the same way
     private var colorIntervalMs = Settings.DEFAULT_COLOR_INTERVAL_MS
     private var transitionMs = Settings.DEFAULT_TRANSITION_MS
     private var brightness = Settings.DEFAULT_BRIGHTNESS
@@ -76,7 +80,7 @@ class AmbientService : Service() {
             onFrame = { frame -> sendColor(frame) },
             onStopped = { stopSelf() },
         )
-        createChannel()
+        createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -107,7 +111,7 @@ class AmbientService : Service() {
         super.onDestroy()
     }
 
-    /** Starts capturing the screen with the permission in [intent] and sets the lamps going. */
+    /** Starts capturing the screen with the permission from the intent, and starts the lamps. */
     private fun startAmbientLight(intent: Intent) {
         val permission = IntentCompat.getParcelableExtra(
             intent,
@@ -121,7 +125,7 @@ class AmbientService : Service() {
         ServiceCompat.startForeground(
             this,
             NOTIFICATION_ID,
-            notification(),
+            createNotification(),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
         )
 
@@ -140,30 +144,31 @@ class AmbientService : Service() {
         scope.launch { updateLamps() }
     }
 
-    /** Finds the color of [frame] and sends it to the lamps if it has changed. */
+    /** Finds the color of the frame and sends it to the lamps, if it has changed enough. */
     private fun sendColor(frame: Bitmap) {
-        val color = colorExtractor.nextColor(frame) ?: return
+        val color = colorExtractor.findNextColor(frame) ?: return
 
         lastColor = color
         lamps.forEach { lamp -> lamp.setColor(color) }
     }
 
     /**
-     * Matches the running lamps to the ones chosen in the settings. A lamp no longer chosen stops
-     * and gets its state back; a newly chosen one starts with the last color. A lamp whose data
-     * has changed, its address after a search for example, is restarted. The new lamps start only
-     * after the removed ones have their state back, so a restarted lamp saves its own state, not
-     * the ambient light's color. Does nothing once the light is stopped.
+     * Brings the running lamps in line with the lamps enabled in the list. A lamp that was turned
+     * off in the list stops and gets its old state back; a newly enabled one starts with the last
+     * color. A lamp whose data has changed, for example its address after a search, is restarted.
+     * The new lamps start only after the removed ones have their old state back, so a restarted
+     * lamp saves its own state, not the ambient light's color. Does nothing once the light is off.
      */
     private suspend fun updateLamps() {
         lampsLock.withLock {
             if (mutableState.value != AmbientState.RUNNING) return
 
-            val chosen = settings.devices.filter { it.used }
-            val kept = lamps.filter { lamp -> lamp.device in chosen }
+            val enabledDevices = settings.devices.filter { it.enabled }
+            // Compares whole devices: a lamp whose name or address changed is restarted
+            val kept = lamps.filter { lamp -> lamp.device in enabledDevices }
             val removed = lamps.filter { lamp -> lamp !in kept }
             val keptDevices = kept.map { lamp -> lamp.device }
-            val started = chosen
+            val started = enabledDevices
                 .filter { device -> device !in keptDevices }
                 .map { device -> LampController(device, colorIntervalMs, transitionMs, brightness) }
 
@@ -181,18 +186,18 @@ class AmbientService : Service() {
             lamps = kept + started
             logger.i(TAG, "Lamps: ${lamps.joinToString { lamp -> lamp.device.host }}")
             getSystemService(NotificationManager::class.java)
-                .notify(NOTIFICATION_ID, notification())
+                .notify(NOTIFICATION_ID, createNotification())
         }
     }
 
-    /** Stops [stopping] all at once; returns when every one has its state back. */
+    /** Stops these lamps in parallel and waits until each one has its old state back. */
     private suspend fun stopLamps(stopping: List<LampController>) {
         coroutineScope {
             stopping.forEach { lamp -> launch { lamp.stop() } }
         }
     }
 
-    private fun createChannel() {
+    private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
             getString(R.string.notification_channel),
@@ -202,8 +207,8 @@ class AmbientService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    /** The service's notification: the number of lamps, a tap opens the app, a stop button. */
-    private fun notification(): Notification {
+    /** The service's notification: how many lamps are on, a tap opens the app, a Stop button. */
+    private fun createNotification(): Notification {
         val text = if (lamps.isEmpty()) {
             getString(R.string.notification_no_lamps)
         }
@@ -240,7 +245,7 @@ class AmbientService : Service() {
         /** What the ambient light is doing now; only the service changes it. */
         val state: StateFlow<AmbientState> = mutableState.asStateFlow()
 
-        /** Starts the ambient light with [permission], the result of the capture dialog. */
+        /** Turns the ambient light on. permission is what the capture dialog returned. */
         fun start(context: Context, permission: Intent) {
             val intent = Intent(context, AmbientService::class.java)
                 .setAction(ACTION_START)
@@ -249,7 +254,7 @@ class AmbientService : Service() {
             ContextCompat.startForegroundService(context, intent)
         }
 
-        /** Stops the ambient light; the lamps get back what they showed before it. */
+        /** Turns the ambient light off; the lamps get back what they showed before. */
         fun stop(context: Context) {
             context.stopService(Intent(context, AmbientService::class.java))
         }

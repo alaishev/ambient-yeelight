@@ -5,18 +5,18 @@ import androidx.palette.graphics.Palette
 import com.ambient.yeelight.logger
 
 /**
- * Finds the dominant color of screen frames and passes it on only when it changes noticeably, so
- * the lamps get no commands for changes the eye does not see: by more than minDeltaE, CIE76.
+ * Finds the main color of each screen frame and passes it on only when it changes noticeably,
+ * by more than minDeltaE (CIE76). So the lamps get no commands for changes the eye won't see.
  */
 class ColorExtractor(private val minDeltaE: Float) {
-    private var lastColor = BLACK // The last color returned by nextColor()
+    private var lastColor = BLACK // The last color findNextColor() returned
 
     /**
-     * The dominant color of [frame], `0xRRGGBB`, if it differs from the last one returned by more
-     * than minDeltaE; null if it does not, or if the frame is black.
+     * The main color of the frame, 0xRRGGBB, if it differs enough from the last one returned.
+     * Null if it doesn't, or if the frame is black: then the lamps keep their color.
      */
-    fun nextColor(frame: Bitmap): Int? {
-        val color = dominantColor(frame)
+    fun findNextColor(frame: Bitmap): Int? {
+        val color = findDominantColor(frame)
 
         if (color == BLACK || color == lastColor) return null
 
@@ -31,8 +31,8 @@ class ColorExtractor(private val minDeltaE: Float) {
         return color
     }
 
-    /** The color most pixels of [frame] are close to, `0xRRGGBB`; black if there is none. */
-    private fun dominantColor(frame: Bitmap): Int {
+    /** The color most pixels of the frame are close to, 0xRRGGBB; black if there is none. */
+    private fun findDominantColor(frame: Bitmap): Int {
         // The frame is small already: Palette must not scale it down further
         val palette = Palette.from(frame)
             .resizeBitmapArea(frame.width * frame.height)

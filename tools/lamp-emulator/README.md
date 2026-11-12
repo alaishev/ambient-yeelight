@@ -2,13 +2,13 @@
 
 Заменяет настоящие лампы при проверке приложения: отвечает на поиск, принимает команды по
 локальной сети и показывает цвет каждой лампы в своём окне. Протокол — по
-`doc/Yeelight_Inter-Operation_Spec.pdf`.
+`docs/Yeelight_Inter-Operation_Spec.pdf`.
 
 ## Запуск
 
 Нужен Python 3.10 или новее с `tkinter` (в Ubuntu: `sudo apt install python3-tk`).
 
-    python3 lamp_emulator.py lamp.json
+    python3 lamp_emulator.py lamps.conf
 
 Закрытие любого окна или Ctrl+C в консоли завершает эмулятор.
 
@@ -22,7 +22,7 @@
 
 ## Настройки
 
-`lamp.json` — список ламп:
+`lamps.conf` — список ламп, в формате JSON:
 
 | Поле | Что |
 |---|---|

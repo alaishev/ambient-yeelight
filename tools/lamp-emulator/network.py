@@ -47,14 +47,14 @@ def serve_search(lamps):
 
 
 def local_address(remote):
-    """Our address on the interface that reaches [remote]; no packet is sent."""
+    """Our address on the network interface that reaches the remote address. Sends nothing."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
         probe.connect((remote, SSDP_PORT))
         return probe.getsockname()[0]
 
 
 def serve_lamp(lamp):
-    """Accepts the control connections of [lamp] on its port, each on a thread of its own, at most
+    """Accepts the control connections of the lamp on its port, each on a thread of its own, at most
     MAX_CONNECTIONS at a time."""
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -116,8 +116,8 @@ def parse_command(lamp, line):
 
 
 def run_command(lamp, connection, quota, line):
-    """Runs a command line within the connection's [quota], sends the reply on [connection], then
-    the change to every connection."""
+    """Runs a command line within the connection's quota and sends the reply on this connection,
+    then the change to every connection."""
     command = parse_command(lamp, line)
 
     if command is None:
@@ -142,7 +142,7 @@ def run_command(lamp, connection, quota, line):
 
 
 def run_lamp_command(lamp, method, params):
-    """Runs a command on [lamp]; set_music is handled here, as it opens a connection."""
+    """Runs a command on the lamp. set_music is handled here, because it opens a connection."""
     if method == "set_music" and lamp.music_mode:
         return set_music(lamp, params)
     return lamp.handle(method, params)
@@ -151,11 +151,12 @@ def run_lamp_command(lamp, method, params):
 def notify(lamp, before, after):
     """Sends the changed properties to every connection, as a lamp does after a change; nothing in
     music mode, as the spec says."""
-    changed = {
-        name: value
-        for name, old, value in zip(NOTIFIED_PROPS, before, after)
-        if old != value
-    }
+    changed = {}  # Name -> new value, only the properties that changed
+
+    # zip() walks the three lists together, like a loop over a common index
+    for name, old, new in zip(NOTIFIED_PROPS, before, after):
+        if old != new:
+            changed[name] = new
 
     if not changed:
         return

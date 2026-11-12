@@ -13,13 +13,15 @@ android {
         applicationId = "com.ambient.yeelight"
         minSdk = 28
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.9.0"
+        versionCode = 10
+        versionName = "1.0.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            // No release key yet: signed with the debug key, so the APK installs
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -32,6 +34,11 @@ android {
         buildConfig = true
         viewBinding = true
     }
+}
+
+// The APK's name: ambient-yeelight-v1.0.0-debug.apk, ambient-yeelight-v1.0.0-release.apk
+base {
+    archivesName = "ambient-yeelight-v${android.defaultConfig.versionName}"
 }
 
 kotlin {

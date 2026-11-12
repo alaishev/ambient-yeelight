@@ -2,9 +2,9 @@
 """Emulates Yeelight lamps in the LAN, for testing the app without real lamps.
 
 Each lamp from the settings file answers the search (SSDP, UDP port 1982) and takes commands on
-its own TCP port, as described in doc/Yeelight_Inter-Operation_Spec.pdf.
+its own TCP port, as described in docs/Yeelight_Inter-Operation_Spec.pdf.
 
-Usage: python3 lamp_emulator.py lamp.json
+Usage: python3 lamp_emulator.py lamps.conf
 """
 
 import json
@@ -20,7 +20,7 @@ from window import LampWindow
 
 def main():
     if len(sys.argv) != 2:
-        sys.exit("Usage: python3 lamp_emulator.py lamp.json")
+        sys.exit("Usage: python3 lamp_emulator.py lamps.conf")
 
     with open(sys.argv[1], encoding="utf-8") as file:
         lamps = [Lamp(config) for config in json.load(file)["lamps"]]
