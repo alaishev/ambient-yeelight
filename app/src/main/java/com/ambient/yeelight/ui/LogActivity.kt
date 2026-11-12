@@ -146,7 +146,10 @@ class LogActivity : AppCompatActivity() {
         }
     }
 
-    /** Android 10 and later: Downloads through MediaStore, no permission. Throws IOException. */
+    /**
+     * Android 10 and later: saves to Downloads through MediaStore, with no permission. Throws
+     * IOException.
+     */
     @RequiresApi(Build.VERSION_CODES.Q)
     private fun saveToMediaStore(name: String) {
         val values = ContentValues()
@@ -221,7 +224,7 @@ class LogActivity : AppCompatActivity() {
     }
 
     private fun createArchiveName(): String =
-        "ambient_light_logs_${ARCHIVE_TIME.format(LocalDateTime.now())}.zip"
+        "ambient_light_logs_${ARCHIVE_TIME_FORMAT.format(LocalDateTime.now())}.zip"
 
     /** Writes the log files into output as a zip and closes it; throws IOException. */
     private fun writeArchive(output: OutputStream) {
@@ -245,7 +248,7 @@ class LogActivity : AppCompatActivity() {
 
     private fun clearLog() {
         logger.clear()
-        logger.i(TAG, "Log cleared") // Starts the new file, with the system info at its top
+        logger.i(TAG, "Log cleared") // The first message starts a new file, with the system info
         showLog()
     }
 
@@ -258,7 +261,7 @@ class LogActivity : AppCompatActivity() {
         const val MAX_LINES = 500 // A 2 MB file is too long to show in full
         const val ZIP_TYPE = "application/zip"
         const val SHARED_FOLDER = "shared" // In the cache; as in res/xml/shared_files.xml
-        val ARCHIVE_TIME: DateTimeFormatter =
+        val ARCHIVE_TIME_FORMAT: DateTimeFormatter =
             DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss", Locale.US)
     }
 }

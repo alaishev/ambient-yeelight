@@ -8,16 +8,17 @@ import com.ambient.yeelight.network.Device
 import org.json.JSONArray
 import org.json.JSONException
 
-/** The app's stored settings: the lamp list and the ambient light parameters. */
+/** What the app keeps between launches: the lamp list and the ambient light settings. */
 class Settings(context: Context) {
     private val prefs = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
-    // Kept here: SharedPreferences holds its listeners by weak references only
+    // SharedPreferences keeps only a weak reference to a listener. We hold it here, or the
+    // garbage collector could remove it and the calls would silently stop
     private var devicesListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     /**
-     * The saved lamps, in the order the user sees them. Empty if nothing is saved yet or the
-     * saved list cannot be read.
+     * The saved lamps, in the order they're shown. Empty if nothing is saved yet or the saved
+     * list can't be read.
      */
     var devices: List<Device>
         get() = readDevices(prefs.getString(KEY_DEVICES, null))
@@ -27,7 +28,7 @@ class Settings(context: Context) {
             prefs.edit { putString(KEY_DEVICES, json.toString()) }
         }
 
-    /** How often a frame is captured and a color goes to the lamps, ms. */
+    /** How often a frame is captured and a color is sent to the lamps, ms. */
     var colorIntervalMs: Long
         get() = prefs.getLong(KEY_COLOR_INTERVAL, DEFAULT_COLOR_INTERVAL_MS)
             .coerceIn(COLOR_INTERVAL_RANGE_MS)
@@ -35,28 +36,28 @@ class Settings(context: Context) {
             prefs.edit { putLong(KEY_COLOR_INTERVAL, value) }
         }
 
-    /** How much a color must change, CIE76 ΔE, before the lamps get it. */
+    /** How much a color must change (CIE76 ΔE) before it's sent to the lamps. */
     var minDeltaE: Float
         get() = prefs.getFloat(KEY_MIN_DELTA_E, DEFAULT_MIN_DELTA_E).coerceIn(MIN_DELTA_E_RANGE)
         set(value) {
             prefs.edit { putFloat(KEY_MIN_DELTA_E, value) }
         }
 
-    /** How long a lamp fades to a new color, ms. */
+    /** How long a lamp takes to fade to a new color, ms. */
     var transitionMs: Int
         get() = prefs.getInt(KEY_TRANSITION, DEFAULT_TRANSITION_MS).coerceIn(TRANSITION_RANGE_MS)
         set(value) {
             prefs.edit { putInt(KEY_TRANSITION, value) }
         }
 
-    /** How bright the lamps shine in the ambient light, percent. */
+    /** How bright the lamps are while the ambient light is on, percent. */
     var brightness: Int
         get() = prefs.getInt(KEY_BRIGHTNESS, DEFAULT_BRIGHTNESS).coerceIn(BRIGHTNESS_RANGE)
         set(value) {
             prefs.edit { putInt(KEY_BRIGHTNESS, value) }
         }
 
-    /** Brings the ambient light parameters back to their defaults; the lamp list stays. */
+    /** Sets the ambient light settings back to the defaults. The lamp list stays as it is. */
     fun resetParameters() {
         prefs.edit {
             remove(KEY_COLOR_INTERVAL)
@@ -67,8 +68,8 @@ class Settings(context: Context) {
     }
 
     /**
-     * Calls [onChange] on the main thread each time a changed lamp list is saved, by this or
-     * another [Settings], until [stopListening]. A new call replaces the listener.
+     * Calls onChange on the main thread every time the lamp list is saved, by this or any other
+     * Settings object, until stopListening(). Calling it again replaces the old listener.
      */
     fun listenToDevices(onChange: () -> Unit) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -82,7 +83,7 @@ class Settings(context: Context) {
         prefs.registerOnSharedPreferenceChangeListener(listener)
     }
 
-    /** Stops the calls set by [listenToDevices]. */
+    /** Stops the calls started by listenToDevices(). */
     fun stopListening() {
         val listener = devicesListener ?: return
 
@@ -105,17 +106,17 @@ class Settings(context: Context) {
     }
 
     companion object {
-        // Up to 3 colors a second: more makes no visible difference. On a usual connection a
-        // lamp takes 144 commands per minute (Yeelight Inter-Operation Specification), one in
-        // 417 ms, so a long run of color changes may lose a few there; music mode has no limit
+        // Up to 3 colors a second: faster makes no visible difference. On a usual connection a
+        // lamp takes only 144 commands a minute, one per 417 ms (Yeelight spec), so in a long
+        // busy scene it may skip a few colors. Music mode has no such limit
         const val DEFAULT_COLOR_INTERVAL_MS = 300L
-        const val DEFAULT_MIN_DELTA_E = 2.5f // About the smallest difference the eye sees
+        const val DEFAULT_MIN_DELTA_E = 2.5f // About the smallest change the eye can see
         const val DEFAULT_TRANSITION_MS = 300
-        const val DEFAULT_BRIGHTNESS = 70 // Percent: bright enough, does not dazzle
+        const val DEFAULT_BRIGHTNESS = 70 // Percent: bright enough, but doesn't dazzle
         val COLOR_INTERVAL_RANGE_MS = 200L..1_000L
         val MIN_DELTA_E_RANGE = 1f..5f
-        val TRANSITION_RANGE_MS = 50..500 // A lamp takes at least 30 ms
-        val BRIGHTNESS_RANGE = 5..100 // Percent; a lamp takes 1..100, below 5 it hardly shows
+        val TRANSITION_RANGE_MS = 50..500 // A lamp needs at least 30 ms
+        val BRIGHTNESS_RANGE = 5..100 // Percent. A lamp takes 1..100, but below 5 it's hardly seen
 
         private const val TAG = "Settings"
         private const val FILE = "settings"

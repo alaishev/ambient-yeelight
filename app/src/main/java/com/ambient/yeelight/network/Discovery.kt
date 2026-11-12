@@ -13,18 +13,35 @@ import java.net.InetAddress
 import java.net.SocketTimeoutException
 
 /**
- * Finds Yeelight lamps in the LAN: sends an SSDP M-SEARCH to the lamps' multicast group and
- * collects the answers. The lamps answer straight to our socket, so no multicast lock is needed.
- * [request] asks one lamp the same way, at its address.
+ * Finds Yeelight lamps in the local network. Sends an SSDP M-SEARCH to the lamps' multicast group
+ * and collects the answers. The lamps answer straight to our socket, so no multicast lock is
+ * needed. request() asks one lamp the same way, at its address.
  */
-class Discovery {
+object Discovery {
+    private const val TAG = "Discovery"
+    private const val GROUP = "239.255.255.250" // The lamps' multicast group
+    private const val PORT = 1982
+    private const val SCHEME = "yeelight://"
+    private const val DURATION_MS = 10_000L
+    private const val REQUEST_COUNT = 3 // UDP may lose a request, so we send it a few times
+    private const val REQUEST_INTERVAL_MS = 1_000L
+    private const val RECEIVE_TIMEOUT_MS = 300 // How often the loop wakes up to resend or stop
+    private const val ANSWER_TIMEOUT_MS = 700 // How long request() waits for each answer
+    private const val ANSWER_SIZE = 1024 // Bytes; a lamp's answer is about 500
+
+    private val REQUEST = listOf(
+        "M-SEARCH * HTTP/1.1",
+        "HOST:$GROUP:$PORT",
+        "MAN:\"ssdp:discover\"",
+        "ST:wifi_bulb",
+    ).joinToString("") { "$it\r\n" }.toByteArray()
 
     /**
-     * Searches for [DURATION_MS] and returns the lamps that answered, each once. Runs on the IO
-     * dispatcher; cancelling the coroutine stops the search within [RECEIVE_TIMEOUT_MS].
+     * Searches for DURATION_MS and returns the lamps that answered, each one once. Runs on the IO
+     * dispatcher. Cancelling the coroutine stops the search within RECEIVE_TIMEOUT_MS.
      */
     suspend fun search(): List<Device> = withContext(Dispatchers.IO) {
-        val found = LinkedHashMap<String, Device>() // By id: a lamp answers every request
+        val found = LinkedHashMap<String, Device>() // By id: a lamp answers each of our requests
 
         try {
             DatagramSocket().use { socket -> collect(socket, found) }
@@ -37,10 +54,10 @@ class Discovery {
     }
 
     /**
-     * Asks the lamp at [host] directly, for a lamp the search does not reach: a router may drop
-     * multicast but pass a datagram to one address. The lamp answers as it does to the search.
-     * Returns null if it does not answer within about [REQUEST_COUNT] × [ANSWER_TIMEOUT_MS]. Runs
-     * on the IO dispatcher.
+     * Asks the lamp at this address directly, for a lamp the search doesn't reach: a router may
+     * drop multicast but still pass a packet to one address. The lamp answers the same way as to
+     * the search. Returns null if there's no answer within about
+     * REQUEST_COUNT × ANSWER_TIMEOUT_MS. Runs on the IO dispatcher.
      */
     suspend fun request(host: String): Device? = withContext(Dispatchers.IO) {
         try {
@@ -52,7 +69,7 @@ class Discovery {
         }
     }
 
-    /** Sends the request [REQUEST_COUNT] times and reads the answers until [DURATION_MS] pass. */
+    /** Sends the request REQUEST_COUNT times and reads the answers until DURATION_MS pass. */
     private suspend fun collect(socket: DatagramSocket, found: MutableMap<String, Device>) {
         val group = InetAddress.getByName(GROUP)
         val request = DatagramPacket(REQUEST, REQUEST.size, group, PORT)
@@ -81,16 +98,17 @@ class Discovery {
                 continue
             }
 
-            val device = parse(String(packet.data, 0, packet.length, Charsets.US_ASCII))
-            val id = device?.id ?: continue
+            // Not a lamp's answer if null. A found lamp always has an id, so its key is the id
+            val device = parse(String(packet.data, 0, packet.length, Charsets.US_ASCII)) ?: continue
 
-            if (found.put(id, device) == null) {
+            if (device.key !in found) {
                 logger.i(TAG, "Found $device")
             }
+            found[device.key] = device
         }
     }
 
-    /** Sends the request to [address] up to [REQUEST_COUNT] times; returns the lamp that answers. */
+    /** Asks this address up to REQUEST_COUNT times and returns the lamp that answers. */
     private suspend fun receiveAnswer(socket: DatagramSocket, address: InetAddress): Device? {
         val request = DatagramPacket(REQUEST, REQUEST.size, address, PORT)
 
@@ -119,8 +137,8 @@ class Discovery {
     }
 
     /**
-     * Reads a lamp from its answer; null if it is not a lamp's answer or misses a field. Field
-     * names are case-insensitive. An answer looks like this:
+     * Reads a lamp from its answer; null if it's not a lamp's answer or a field is missing. Field
+     * names may come in any case. An answer looks like this:
      * ```
      * HTTP/1.1 200 OK
      * Cache-Control: max-age=3600
@@ -144,15 +162,21 @@ class Discovery {
      * ```
      */
     private fun parse(answer: String): Device? {
-        val fields = answer.lineSequence()
-            .filter { ':' in it }
-            .associate { line ->
-                line.substringBefore(':').trim().lowercase() to line.substringAfter(':').trim()
-            }
-        val location = fields["location"]?.takeIf { it.startsWith(SCHEME) } ?: return null
-        val address = location.removePrefix(SCHEME)
-        val port = address.substringAfter(':', "").toIntOrNull() ?: return null
+        val fields = mutableMapOf<String, String>() // Field names in lower case
+
+        for (line in answer.lines()) {
+            if (':' !in line) continue
+
+            fields[line.substringBefore(':').trim().lowercase()] = line.substringAfter(':').trim()
+        }
+
+        val location = fields["location"] ?: return null
         val id = fields["id"] ?: return null
+
+        if (!location.startsWith(SCHEME)) return null
+
+        val address = location.removePrefix(SCHEME) // "192.168.1.239:55443"
+        val port = address.substringAfter(':', "").toIntOrNull() ?: return null
         val methods = fields["support"].orEmpty().split(' ')
 
         return Device(
@@ -161,52 +185,39 @@ class Discovery {
             name = fields["name"].orEmpty(),
             host = address.substringBefore(':'),
             port = port,
-            musicMode = Commands.SET_MUSIC in methods,
+            supportsMusicMode = Commands.SET_MUSIC in methods,
         )
     }
 
-    companion object {
-        private const val TAG = "Discovery"
-        private const val GROUP = "239.255.255.250" // The lamps' multicast group
-        private const val PORT = 1982
-        private const val SCHEME = "yeelight://"
-        private const val DURATION_MS = 10_000L
-        private const val REQUEST_COUNT = 3 // UDP can lose a request, so it is sent again
-        private const val REQUEST_INTERVAL_MS = 1_000L
-        private const val RECEIVE_TIMEOUT_MS = 300 // How often the loop resends and checks the end
-        private const val ANSWER_TIMEOUT_MS = 700 // How long request() waits for each answer
-        private const val ANSWER_SIZE = 1024 // Bytes; a lamp's answer is about 500
+    /**
+     * Puts the found lamps into the saved list. A saved lamp is matched by its id, or by its
+     * address if it has no id yet (added by hand). A matched lamp gets the found id, address,
+     * model and name, but keeps its place in the list and whether it's enabled. Found lamps
+     * with no match go to the end, disabled. Saved lamps that weren't found stay as they are.
+     */
+    fun merge(saved: List<Device>, found: List<Device>): List<Device> {
+        val merged = saved.toMutableList()
+        val rest = found.toMutableList() // Found lamps that aren't matched yet
 
-        private val REQUEST = listOf(
-            "M-SEARCH * HTTP/1.1",
-            "HOST:$GROUP:$PORT",
-            "MAN:\"ssdp:discover\"",
-            "ST:wifi_bulb",
-        ).joinToString("") { "$it\r\n" }.toByteArray()
+        // By id first, so a lamp added by hand can't take the found lamp of a known one
+        for (index in merged.indices) {
+            val device = merged[index]
+            val lamp = rest.find { it.id != null && it.id == device.id } ?: continue
 
-        /**
-         * Puts the [found] lamps into the [saved] list. A saved lamp is matched by id, or by host
-         * if its id is unknown (added by hand); it takes the found id, address, model and name and
-         * keeps its place and [Device.used]. Found lamps not matched go to the end, not used.
-         * Saved lamps that were not found stay as they are.
-         */
-        fun merge(saved: List<Device>, found: List<Device>): List<Device> {
-            val rest = found.toMutableList() // Found lamps not matched yet
-            // By id first, so a lamp added by hand cannot take the found lamp of a known one
-            val byId = saved.map { device ->
-                val index = rest.indexOfFirst { lamp -> lamp.id == device.id }
-
-                if (index < 0) device else rest.removeAt(index).copy(used = device.used)
-            }
-            val byHost = byId.map { device ->
-                val index = rest.indexOfFirst { lamp ->
-                    device.id == null && lamp.host == device.host
-                }
-
-                if (index < 0) device else rest.removeAt(index).copy(used = device.used)
-            }
-
-            return byHost + rest
+            merged[index] = lamp.copy(enabled = device.enabled)
+            rest.remove(lamp)
         }
+        // Then by address, for lamps added by hand: they have no id yet
+        for (index in merged.indices) {
+            val device = merged[index]
+
+            if (device.id != null) continue
+
+            val lamp = rest.find { it.host == device.host } ?: continue
+
+            merged[index] = lamp.copy(enabled = device.enabled)
+            rest.remove(lamp)
+        }
+        return merged + rest
     }
 }

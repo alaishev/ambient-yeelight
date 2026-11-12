@@ -36,19 +36,24 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import java.io.IOException
 
-
+/**
+ * The main screen: the ambient light switch and the lamp list. A lamp can be found by a search,
+ * added by its address, turned on or off for the light, and removed by a long click.
+ */
 class MainActivity : AppCompatActivity() {
     private lateinit var mediaProjectionManager: MediaProjectionManager
-    private lateinit var startMediaProjection: ActivityResultLauncher<Intent>
+    private lateinit var requestCapturePermission: ActivityResultLauncher<Intent>
     private lateinit var requestNotificationPermission: ActivityResultLauncher<String>
     private lateinit var settings: Settings
     private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: DeviceListAdapter
 
-    // Changed only on the main thread, by the screen's coroutines in lifecycleScope
+    // Changed only on the main thread: by clicks and by the screen's coroutines in lifecycleScope
     private var devices: List<Device> = emptyList()
-    private var online: Set<String> = emptySet() // Keys of the lamps that answer
-    private var job: Job? = null // The screen's network work; a new one cancels the old one
+    private var online: Set<String> = emptySet() // Keys of the lamps that answered last time
+    // The screen's network work: the lamp check, a search or adding a lamp. Only one runs at a
+    // time, so a new one cancels the old one; closing the add dialog cancels it too
+    private var job: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,7 +61,10 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         settings = Settings(this)
-        adapter = DeviceListAdapter(onEnabledChange = ::setUsed, onRemoveRequest = ::confirmRemove)
+        adapter = DeviceListAdapter(
+            onEnabledChange = ::setEnabled,
+            onRemoveRequest = ::confirmRemove,
+        )
         binding.lampList.adapter = adapter
 
         binding.ambientSwitch.setOnClickListener {
@@ -70,7 +78,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            stopAmbientService()
+            AmbientService.stop(this)
         }
 
         binding.addButton.setOnClickListener {
@@ -93,20 +101,21 @@ class MainActivity : AppCompatActivity() {
             requestCapture()
         }
 
-        // Register MediaProjection permission request
+        // The capture dialog: the light starts only if the user allows the capture
         mediaProjectionManager = getSystemService(MediaProjectionManager::class.java)
-        startMediaProjection = registerForActivityResult(
+        requestCapturePermission = registerForActivityResult(
             ActivityResultContracts.StartActivityForResult()
         ) { result ->
-            val res = result.resultCode == RESULT_OK
-            logger.i(TAG, "MediaProjectionPermission=$res")
+            val permission = result.data
 
-            if (res) {
-
-                startAmbientService(result.data!!)
+            if (result.resultCode == RESULT_OK && permission != null) {
+                logger.i(TAG, "Screen capture allowed")
+                AmbientService.start(this, permission)
             }
-
-            binding.ambientSwitch.isChecked = (result.resultCode == RESULT_OK)
+            else {
+                logger.i(TAG, "Screen capture not allowed")
+                binding.ambientSwitch.isChecked = false
+            }
         }
 
         // The switch follows the service, also when the system stops the capture
@@ -125,7 +134,7 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
 
-        // The lamps may have come or gone while the screen was not shown
+        // Lamps may have come or gone while the screen wasn't shown
         job?.cancel()
         job = lifecycleScope.launch {
             online = probe(devices)
@@ -133,35 +142,18 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * Start Ambient service
-     * @param data Data intent after receive MediaProjection permission
-     */
-    private fun startAmbientService(data: Intent) {
-        logger.i(TAG, "Start Service")
-        AmbientService.start(this, data)
-    }
-
-    /**
-     * Just stop Ambient service
-     */
-    private fun stopAmbientService() {
-        logger.i(TAG, "Stop Service")
-        AmbientService.stop(this)
-    }
-
-    /** Searches the lamps, merges them into the list and saves it; the found ones are online. */
+    /** Searches for lamps, puts them into the list and saves it. The found lamps are online. */
     private fun searchDevices() {
         job?.cancel()
         job = lifecycleScope.launch {
             logger.i(TAG, "Searching devices...")
             showSearching(true)
             try {
-                val found = Discovery().search()
+                val found = Discovery.search()
                 val foundKeys = found.map { it.key }.toSet()
                 val merged = Discovery.merge(devices, found)
 
-                // Lamps added by hand may be out of the search's reach but still answer by TCP
+                // A lamp added by hand may not answer the search but still answer by TCP
                 online = foundKeys + probe(merged.filter { it.key !in foundKeys })
                 devices = merged
                 settings.devices = merged
@@ -177,23 +169,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Shows the spinner instead of the search and add buttons while [searching]. */
+    /** While searching, shows the spinner instead of the search and add buttons. */
     private fun showSearching(searching: Boolean) {
         binding.searchProgress.isVisible = searching
         binding.searchButton.isVisible = !searching
         binding.addButton.isVisible = !searching
     }
 
-    /** Asks all [devices] at once by TCP; returns the keys of the ones that answer. */
+    /** Asks all the lamps by TCP at once and returns the keys of those that answer. */
     private suspend fun probe(devices: List<Device>): Set<String> = coroutineScope {
-        devices
-            .map { device -> async { device.key.takeIf { requestDevice(device) != null } } }
-            .awaitAll()
-            .filterNotNull()
-            .toSet()
+        val answered = devices.map { device -> async { requestDevice(device) } }.awaitAll()
+
+        answered.filterNotNull().map { it.key }.toSet()
     }
 
-    /** Asks [device] about itself over a connection of its own; null if it does not answer. */
+    /** Asks the lamp about itself over a new connection; null if it doesn't answer. */
     private suspend fun requestDevice(device: Device): Device? {
         try {
             return openConnection(device).use { connection -> connection.requestDevice() }
@@ -204,9 +194,9 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Turns the ambient light on or off for [device] and saves the lamp list. */
-    private fun setUsed(device: Device, used: Boolean) {
-        devices = devices.map { if (it.key == device.key) it.copy(used = used) else it }
+    /** Turns the ambient light on or off for this lamp and saves the list. */
+    private fun setEnabled(device: Device, enabled: Boolean) {
+        devices = devices.map { if (it.key == device.key) it.copy(enabled = enabled) else it }
         settings.devices = devices
         adapter.update(devices, online)
     }
@@ -224,8 +214,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Removes the lamp from the list and saves the list; the service stops the light on the lamp,
-     * if it runs.
+     * Removes the lamp from the list and saves the list. If the light is on, the service sees
+     * the change and gives the lamp its old state back.
      */
     private fun removeDevice(device: Device) {
         devices = devices.filter { it.key != device.key }
@@ -246,15 +236,11 @@ class MainActivity : AppCompatActivity() {
 
     /** Shows the system dialog that allows the screen capture. */
     private fun requestCapture() {
-        startMediaProjection.launch(mediaProjectionManager.createScreenCaptureIntent())
+        requestCapturePermission.launch(mediaProjectionManager.createScreenCaptureIntent())
     }
 
-    /**
-     * Show notification toast
-     * @param message to show
-     */
-    private fun showToast(message: CharSequence, duration: Int = Toast.LENGTH_SHORT) {
-        Toast.makeText(this, message, duration).show()
+    private fun showToast(message: CharSequence) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     /**
@@ -263,7 +249,7 @@ class MainActivity : AppCompatActivity() {
      */
     private fun showAddDeviceDialog() {
         val dialogBinding = AddDeviceDialogBinding.inflate(layoutInflater)
-        // The Add button gets its listener below, so a click does not close the dialog
+        // The Add button gets its listener after show(): then a click doesn't close the dialog
         val dialog = MaterialAlertDialogBuilder(this)
             .setTitle(R.string.add_lamp_title)
             .setView(dialogBinding.root)
@@ -281,8 +267,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Adds the lamp at the address in the dialog, only if it answers by TCP, then closes the
-     * dialog. A wrong address or a lamp that does not answer is shown in the field.
+     * Adds the lamp at the address from the dialog, but only if it answers by TCP, then closes
+     * the dialog. A wrong address or a lamp that doesn't answer is shown as an error in the field.
      */
     private fun addDevice(dialog: AlertDialog, dialogBinding: AddDeviceDialogBinding) {
         val host = dialogBinding.hostInput.text.toString().trim()
@@ -296,15 +282,15 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val device = Device(id = null, model = "", name = "", host = host, used = true)
+        val device = Device(id = null, model = "", name = "", host = host, enabled = true)
 
         dialogBinding.hostLayout.error = null
         showChecking(dialog, dialogBinding, checking = true)
         job?.cancel()
         job = lifecycleScope.launch {
-            // The direct search request, if the lamp answers it too, gives its id, model and
-            // music mode support
-            val request = async { Discovery().request(host) }
+            // If the lamp also answers the search request, we get its id, model and whether it
+            // has music mode
+            val request = async { Discovery.request(host) }
             val answered = requestDevice(device)
             val found = request.await()
 
@@ -314,7 +300,7 @@ class MainActivity : AppCompatActivity() {
                 return@launch
             }
 
-            val added = found?.copy(used = true) ?: answered
+            val added = found?.copy(enabled = true) ?: answered
 
             devices = Discovery.merge(devices, listOf(added))
             settings.devices = devices

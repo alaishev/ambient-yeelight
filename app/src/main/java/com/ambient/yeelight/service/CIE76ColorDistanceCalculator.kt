@@ -62,7 +62,7 @@ object CIE76ColorDistanceCalculator {
 
         val lab = IntArray(3)
 
-        lab[0] = (2.55 * lS + .5).toInt()
+        lab[0] = (2.55 * lS + .5).toInt() // TODO remove scales to prevent flicking dark colors
         lab[1] = (aS + .5).toInt()
         lab[2] = (bS + .5).toInt()
 

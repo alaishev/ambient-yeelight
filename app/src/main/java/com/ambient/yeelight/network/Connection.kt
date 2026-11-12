@@ -18,42 +18,43 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.concurrent.thread
 
 /**
- * The lamp's protocol over a connected [socket] to [device]: sends [Commands] lines, each with an
- * id of its own, and matches the lamp's replies to them by the id. Made by [openConnection] or
- * [acceptConnection]. The connection lives as long as the socket: once [close] or the lamp closes
- * it, it is not used again.
+ * Talks to one lamp over an open socket. Sends commands as lines (see Commands), each with its
+ * own id, and matches the lamp's answers to them by that id. Made by openConnection() or
+ * acceptConnection(). Once the socket is closed, by close() or by the lamp, the connection is
+ * done and isn't used again.
  *
- * A lamp takes at most [MAX_COMMANDS] commands per minute on one connection and drops the rest,
- * so a connection sends no more than that: the next command throws [CommandLimitException].
- * [noLimit] turns the limit off, for a connection the lamp takes any number of commands on.
+ * A lamp takes at most MAX_COMMANDS commands a minute on one connection and silently drops the
+ * rest. So a connection sends no more than that: the next command throws CommandLimitException.
+ * With noLimit there's no such limit; that's for music mode, where the lamp takes any number.
  *
- * One caller sends at a time. Replies are read on a thread of their own; [close] can be called
- * from any thread.
+ * Only one caller may send at a time. Answers are read on the connection's own thread; close()
+ * can be called from any thread.
  */
 class Connection(
     val device: Device,
     private val socket: Socket,
     private val noLimit: Boolean = false,
 ) : Closeable {
-    private val replies = ConcurrentHashMap<Int, CompletableDeferred<JSONObject>>() // By command id
+    // Answers we wait for, by command id
+    private val replies = ConcurrentHashMap<Int, CompletableDeferred<JSONObject>>()
     private var nextId = 1
 
     @Volatile
-    private var closed = false // Set by close(), so the reader does not report a lost connection
+    private var closed = false // Set by close(), so the reader doesn't log it as a lost connection
 
-    /** Commands sent on this connection. */
+    /** How many commands this connection has sent. */
     var sentCommands = 0
         private set
 
-    /** True until the socket closes. */
+    /** True until the socket is closed. */
     val isOpen: Boolean
         get() = !socket.isClosed
 
-    /** True once [MAX_COMMANDS] are sent, unless there is [noLimit]. */
+    /** True once MAX_COMMANDS commands are sent, unless there's noLimit. */
     val commandsLimitReached: Boolean
         get() = !noLimit && (sentCommands >= MAX_COMMANDS)
 
-    /** Our address in the lamp's network, the one the lamp can connect back to. */
+    /** Our address in the lamp's network: the one the lamp can connect back to. */
     val localAddress: InetAddress
         get() = socket.localAddress
 
@@ -62,15 +63,15 @@ class Connection(
         logger.i(TAG, "${device.host}: connected")
     }
 
-    /** Sends a command without waiting for the reply; throws IOException. */
+    /** Sends a command and doesn't wait for an answer. Throws IOException. */
     suspend fun sendCommand(method: String, params: List<Any>) {
         write(method, params, reply = null)
     }
 
     /**
-     * Sends a command and waits up to [REPLY_TIMEOUT_MS] for the reply. Returns the reply's
-     * result; null if the lamp does not reply or reports an error. Throws IOException if the
-     * command cannot be sent.
+     * Sends a command and waits up to REPLY_TIMEOUT_MS for the answer. Returns the answer's
+     * result, or null if the lamp doesn't answer or reports an error. Throws IOException if the
+     * command can't be sent.
      */
     suspend fun sendRequest(method: String, params: List<Any>): JSONArray? {
         val reply = CompletableDeferred<JSONObject>()
@@ -92,26 +93,28 @@ class Connection(
     }
 
     /**
-     * Asks the lamp about itself; returns [device] with the lamp's name, which may be empty, and
-     * music mode support. Null if the lamp does not reply. A lamp answers an unknown property with
-     * an empty string (Yeelight Inter-Operation Specification), so an empty `music_on` means the
-     * lamp has no music mode.
+     * Asks the lamp for its name and whether it has music mode, and returns the device with them;
+     * null if the lamp doesn't answer. The name may be empty. A lamp answers an unknown property
+     * with an empty string (Yeelight spec), so an empty music_on means there's no music mode.
      */
     suspend fun requestDevice(): Device? {
         val props = sendRequest(Commands.GET_PROP, DEVICE_PROPS) ?: return null
 
-        return device.copy(name = props.optString(0), musicMode = props.optString(1).isNotEmpty())
+        return device.copy(
+            name = props.optString(0),
+            supportsMusicMode = props.optString(1).isNotEmpty(),
+        )
     }
 
-    /** Closes the socket, which also stops the reader. */
+    /** Closes the socket. That also ends the reader thread. */
     override fun close() {
         closed = true
         socket.close()
     }
 
     /**
-     * Writes one command; [reply], if any, gets the lamp's reply to it. Returns the command id.
-     * Throws [CommandLimitException] once [commandsLimitReached].
+     * Writes one command line. If reply is given, it gets the lamp's answer to this command.
+     * Returns the command id. Throws CommandLimitException once the limit is reached.
      */
     private suspend fun write(
         method: String,
@@ -121,7 +124,7 @@ class Connection(
         if (commandsLimitReached) throw CommandLimitException()
 
         val id = nextId++
-        val line = Commands.create(id, method, params)
+        val line = createCommand(id, method, params)
 
         if (reply != null) {
             replies[id] = reply
@@ -145,8 +148,8 @@ class Connection(
     }
 
     /**
-     * Reads the lamp's replies until the socket closes, then closes it, so [isOpen] turns false.
-     * Lines without an id are state notifications the lamp sends; they are skipped.
+     * Reads the lamp's answers until the socket closes, then closes it on our side too, so isOpen
+     * turns false. Lines without an id are the lamp's state notifications; we skip them.
      */
     private fun read() {
         try {
@@ -175,10 +178,7 @@ class Connection(
     }
 
     companion object {
-        /**
-         * Yeelight Inter-Operation Specification: a lamp takes at most 60 commands per minute on
-         * one connection.
-         */
+        /** A lamp takes at most 60 commands a minute on one connection (Yeelight spec). */
         const val MAX_COMMANDS = 60
 
         private const val TAG = "Connection"
@@ -189,7 +189,7 @@ class Connection(
 
 private const val CONNECT_TIMEOUT_MS = 2_000
 
-/** Connects to the control port of [device] within [CONNECT_TIMEOUT_MS]; throws IOException. */
+/** Connects to the lamp's control port, waiting up to CONNECT_TIMEOUT_MS. Throws IOException. */
 suspend fun openConnection(device: Device): Connection {
     val socket = Socket()
 
@@ -206,8 +206,9 @@ suspend fun openConnection(device: Device): Connection {
 }
 
 /**
- * Waits for [device] to connect to [server], as long as the server's timeout, for a connection
- * with no command limit; throws IOException, a SocketTimeoutException if the lamp does not come.
+ * Waits until the lamp connects to our server, for music mode: such a connection has no command
+ * limit. Waits as long as the server's timeout. Throws IOException, or SocketTimeoutException if
+ * the lamp doesn't come.
  */
 suspend fun acceptConnection(device: Device, server: ServerSocket): Connection {
     val socket = withContext(Dispatchers.IO) { server.accept() }
@@ -216,7 +217,7 @@ suspend fun acceptConnection(device: Device, server: ServerSocket): Connection {
 }
 
 /**
- * Thrown by [Connection] for a command over [Connection.MAX_COMMANDS]; the caller opens a new
- * connection. An IOException, so it goes the way of other send failures.
+ * Thrown when a connection has already sent MAX_COMMANDS; the caller opens a new one. It's an
+ * IOException, so it's handled like any other send failure.
  */
 class CommandLimitException : IOException("Commands limit reached")

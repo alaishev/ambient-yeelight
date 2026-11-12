@@ -24,14 +24,14 @@ import kotlinx.coroutines.launch
 import java.nio.ByteBuffer
 
 /**
- * Captures the screen into a small frame, [FRAME_WIDTH] wide and as high as the screen's aspect
- * ratio makes it. The system scales the screen down into a virtual display of that size, so the
- * app never copies a full-size picture.
+ * Captures the screen into a small frame, FRAME_WIDTH wide, with the screen's aspect ratio. The
+ * system itself scales the screen down into a virtual display of that size, so the app never
+ * copies a full-size picture.
  *
- * @param onFrame called on a background thread with each new frame; the bitmap is reused for the
- *   next frame, so it must be done with before onFrame returns
+ * @param onFrame called on a background thread with each new frame. The bitmap is reused for the
+ *   next frame, so onFrame must be done with it before it returns
  * @param onStopped called on the main thread if the system or the user stops the capture, for
- *   example from the status bar; not called after [stop]
+ *   example from the status bar. Not called after stop()
  */
 class ScreenCapture(
     private val context: Context,
@@ -39,10 +39,10 @@ class ScreenCapture(
     private val onStopped: () -> Unit,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var job: Job? = null // The capture loop; it releases the projection when it ends
+    private var job: Job? = null // The capture loop; when it ends, it releases the projection
 
     @Volatile
-    private var stopped = false // Set by stop(), so the projection's own stop is not reported
+    private var stopped = false // Set by stop(), so our own stop isn't reported as the system's
 
     private val callback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -54,8 +54,8 @@ class ScreenCapture(
     }
 
     /**
-     * Starts capturing a frame every [intervalMs] with the permission [data] from
-     * MediaProjectionManager. Returns false if the permission does not work.
+     * Starts capturing a frame every intervalMs. data is the permission the capture dialog gave.
+     * Returns false if the capture can't start.
      */
     fun start(data: Intent, intervalMs: Long): Boolean {
         val manager = context.getSystemService(MediaProjectionManager::class.java)
@@ -68,7 +68,7 @@ class ScreenCapture(
 
         stopped = false
 
-        val size = frameSize()
+        val size = calculateFrameSize()
         val dpi = context.resources.displayMetrics.densityDpi
         val reader = ImageReader.newInstance(size.width, size.height, PixelFormat.RGBA_8888, 2)
 
@@ -86,13 +86,21 @@ class ScreenCapture(
             null,
         )
 
+        if (display == null) {
+            logger.e(TAG, "Cannot create the virtual display")
+            reader.close()
+            projection.unregisterCallback(callback)
+            projection.stop()
+            return false
+        }
+
         logger.i(TAG, "Capturing ${size.width}x${size.height} every $intervalMs ms")
         job = scope.launch {
             try {
                 captureFrames(reader, size, intervalMs)
             }
             finally {
-                display?.release()
+                display.release()
                 reader.close()
                 projection.unregisterCallback(callback)
                 projection.stop()
@@ -102,13 +110,13 @@ class ScreenCapture(
         return true
     }
 
-    /** Stops capturing and releases the projection; [onStopped] is not called. */
+    /** Stops capturing and releases the projection. onStopped isn't called. */
     fun stop() {
         stopped = true
         job?.cancel()
     }
 
-    /** Every [intervalMs], copies the newest image of [reader] to the frame and passes it on. */
+    /** Every intervalMs, copies the newest screen image into the frame and passes it on. */
     private suspend fun captureFrames(reader: ImageReader, size: Size, intervalMs: Long) {
         val frame = Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888)
         val pixels = ByteArray(size.width * size.height * BYTES_PER_PIXEL) // Rows with no padding
@@ -137,15 +145,15 @@ class ScreenCapture(
         }
     }
 
-    /** [FRAME_WIDTH] wide, as high as the screen's aspect ratio in its current orientation. */
-    private fun frameSize(): Size {
+    /** FRAME_WIDTH wide, and as high as the screen's aspect ratio gives in its current turn. */
+    private fun calculateFrameSize(): Size {
         val display = context.getSystemService(DisplayManager::class.java)
             .getDisplay(Display.DEFAULT_DISPLAY)
         val mode = display.mode
-        val turned = display.rotation == Surface.ROTATION_90 ||
+        val rotated = display.rotation == Surface.ROTATION_90 ||
             display.rotation == Surface.ROTATION_270
-        val width = if (turned) mode.physicalHeight else mode.physicalWidth
-        val height = if (turned) mode.physicalWidth else mode.physicalHeight
+        val width = if (rotated) mode.physicalHeight else mode.physicalWidth
+        val height = if (rotated) mode.physicalWidth else mode.physicalHeight
 
         return Size(FRAME_WIDTH, FRAME_WIDTH * height / width)
     }

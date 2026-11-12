@@ -28,7 +28,7 @@ class Quota:
         self.times = collections.deque()  # time.monotonic() of each command counted, oldest first
 
     def count(self, now):
-        """The number of commands counted in the period before [now]."""
+        """How many commands were counted in the last QUOTA_PERIOD_S before now."""
         while self.times and self.times[0] <= now - QUOTA_PERIOD_S:
             self.times.popleft()
         return len(self.times)
@@ -74,7 +74,7 @@ class Lamp:
         return methods
 
     def props(self, names):
-        """The values of the properties [names], as strings; "" for an unknown one, as a lamp."""
+        """The values of these properties, as strings. An unknown one is "", as a real lamp does."""
         values = {
             "power": "on" if self.power else "off",
             "bright": str(self.bright),
@@ -93,7 +93,7 @@ class Lamp:
         return [values.get(name, "") for name in names]
 
     def search_answer(self, host):
-        """The answer to a search request; [host] is our address the app can reach."""
+        """The answer to a search request; host is our address that the app can reach."""
         lines = [
             "HTTP/1.1 200 OK",
             "Cache-Control: max-age=3600",
@@ -178,7 +178,7 @@ class Lamp:
             raise CommandError("the lamp is off")
 
     def start_transition(self, effect):
-        """Starts the change to a new state from the color shown now. [effect] is the command's
+        """Starts the change to a new state from the color shown now. effect is the command's
         effect and duration, ms: ("smooth", 300) changes gradually, ("sudden", ...) at once."""
         now = time.monotonic()
         smooth = len(effect) == 2 and effect[0] == "smooth"
@@ -206,10 +206,11 @@ class Lamp:
             case _:
                 rgb = colorsys.hsv_to_rgb(self.hue / 360, self.sat / 100, 1.0)
                 color = tuple(channel * 255 for channel in rgb)
+        # Every channel scaled by the brightness, as a new (r, g, b)
         return tuple(round(channel * self.bright / 100) for channel in color)
 
     def shown_color(self, now):
-        """The color the lamp shows at [now], time.monotonic(): on the way to the target one."""
+        """The color the lamp shows at time now (time.monotonic()), on its way to the target."""
         target = self.target_color()
         elapsed = now - self.transition_start
 
@@ -218,6 +219,7 @@ class Lamp:
 
         part = elapsed / self.transition_s
 
+        # Each channel moves from the old value to the new one; zip() walks both colors together
         return tuple(
             round(old + (new - old) * part) for old, new in zip(self.transition_from, target)
         )
@@ -249,7 +251,7 @@ def check_range(value, low, high):
 
 
 def ct_to_rgb(kelvin):
-    """The approximate color of white light of [kelvin], 1700..6500 (Tanner Helland's fit)."""
+    """The rough color of white light of this temperature, 1700..6500 K (Tanner Helland's fit)."""
     t = kelvin / 100
     green = 99.4708025861 * math.log(t) - 161.1195681661
     blue = 0 if t <= 19 else 138.5177312231 * math.log(t - 10) - 305.0447927307

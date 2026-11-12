@@ -1,144 +1,160 @@
 # Ambient YeeLight
 
-Амбиентная подсветка телевизора умными лампами и светодиодными лентами Xiaomi Yeelight.
-Приложение захватывает изображение с экрана, находит его доминирующий цвет и плавно передаёт
-его лампам по локальной сети, примерно три раза в секунду.
+**English** | [Русский](README.ru.md)
 
-- основная платформа — Android TV, на телефоне приложение тоже работает;
-- Android 9 и новее (`minSdk 28`);
-- лампы управляются напрямую по Wi-Fi, без облака Xiaomi и без приложения Yeelight.
+Ambient TV lighting with Xiaomi Yeelight smart bulbs and LED strips. The app captures the
+screen, finds its dominant color and sends it smoothly to the lamps over the local network,
+about three times a second.
 
-## Что умеет
+- made for Android TV first; it works on a phone too;
+- Android 9 or later (`minSdk 28`);
+- the lamps are controlled directly over Wi-Fi, with no Xiaomi cloud and no Yeelight app.
 
-- **Поиск ламп** в локальной сети (SSDP, около 10 секунд) и добавление лампы вручную по IP-адресу.
-- **Список ламп сохраняется.** Повторный поиск не теряет выбранные лампы и лампы, добавленные
-  вручную. Если роутер выдал лампе новый адрес, она узнаётся по своему id.
-- **Статус лампы** («online» / «offline»): найдена поиском или ответила по TCP.
-- **Выбор ламп для подсветки** — переключатель у каждой лампы.
-- **Удаление лампы** — долгое нажатие на неё в списке (на пульте — долгое нажатие OK).
-- **Подсветка** включается переключателем «Ambient Light». Система спросит разрешение на запись
-  экрана, после чего подсветка работает в фоне, в foreground-сервисе с уведомлением.
-- **Music mode.** Если лампа его поддерживает, она сама подключается к приложению и принимает
-  цвета без ограничений по частоте. Если нет — работает обычное соединение с соблюдением лимитов
-  лампы.
-- **Состояние лампы возвращается.** При старте подсветки приложение запоминает, что лампа
-  показывала (питание, режим, цвет или цветовую температуру, яркость), включает её и ставит
-  яркость из настроек. При выключении подсветки возвращает всё как было; если лампа была
-  выключена, снова выключает её.
-- **Настройки**: интервал между цветами, порог изменения цвета, длительность перехода и яркость
-  ламп (по умолчанию 70%). Действуют со следующего включения подсветки.
-- **Журнал** — в настройках: последние строки, сохранение архивом в «Загрузки», отправка, очистка.
+## Features
 
-## Подготовка ламп
+- **Lamp search** in the local network (SSDP, about 10 seconds), and adding a lamp by hand by its
+  IP address.
+- **The lamp list is saved.** A new search keeps the enabled lamps and the lamps added by hand.
+  If the router gives a lamp a new address, the lamp is still recognized by its id.
+- **Lamp status** ("online" / "offline"): found by the search or answered over TCP.
+- **Choosing lamps for the light**: a switch on every lamp.
+- **Removing a lamp**: a long press on it in the list (on a remote, a long press on OK).
+- **The ambient light** is turned on by the "Ambient Light" switch. The system asks for the
+  permission to capture the screen; after that the light runs in the background, in a foreground
+  service with a notification.
+- **Music mode.** If a lamp supports it, the lamp connects to the app and takes colors with no
+  rate limit. If not, a usual connection is used, within the lamp's limits.
+- **The lamp's state comes back.** When the light starts, the app remembers what each lamp showed
+  (power, mode, color or color temperature, brightness), turns it on and sets the brightness from
+  the settings. When the light stops, everything comes back as it was; a lamp that was off is
+  turned off again.
+- **Settings**: the interval between colors, the color change threshold, the transition time and
+  the lamps' brightness (70% by default). They apply the next time the light is turned on.
+- **Log**, in the settings: the latest lines, saving as a zip to Downloads, sending, clearing.
 
-В приложении Yeelight для каждой лампы включите **«Управление по локальной сети»** (LAN Control).
-Без этого лампа не отвечает на поиск и не принимает команды. Телевизор и лампы должны быть в одной
-сети.
+## Limitations
 
-## Сборка
+- **Protected video.** Apps with copy protection (DRM), such as Netflix, block screen capture.
+  The system gives the app a black frame instead of their picture, and the lamps keep their last
+  color. The light works with video that has no such protection: YouTube, file players,
+  unprotected TV channels, games.
 
-Нужны JDK 17 или новее и Android SDK; путь к SDK — в `local.properties` (`sdk.dir=...`), Android
-Studio создаёт его сама.
+## Preparing the lamps
+
+In the Yeelight app, turn on **LAN Control** for every lamp. Without it a lamp doesn't answer the
+search and doesn't take commands. The TV and the lamps must be in the same network.
+
+## Building
+
+You need JDK 17 or later and the Android SDK. The SDK path goes into `local.properties`
+(`sdk.dir=...`); Android Studio creates it by itself.
 
 ```
-./gradlew assembleDebug
+./gradlew assembleDebug     # debug build
+./gradlew assembleRelease   # release build
 ```
 
-APK: `app/build/outputs/apk/debug/app-debug.apk`. Установка на телевизор по сети (на ТВ должна быть
-включена отладка по сети в настройках разработчика):
+APK: `app/build/outputs/apk/debug/ambient-yeelight-v<version>-debug.apk` and
+`app/build/outputs/apk/release/ambient-yeelight-v<version>-release.apk`. To install it on a TV
+over the network (network debugging must be on in the TV's developer options):
 
 ```
-adb connect <адрес ТВ>:5555
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb connect <TV address>:5555
+adb install -r app/build/outputs/apk/release/ambient-yeelight-v*-release.apk
 ```
 
-Без ламп приложение можно проверить на эмуляторе: `tools/lamp-emulator/`.
+The project has no signing key of its own yet: the release build is signed with the debug key
+(`~/.android/debug.keystore`), so the APK can be installed. Every computer has its own debug
+key, so an APK built on another computer won't install over the one already installed: remove
+the app first, and the lamp list goes with it.
 
-## Первый запуск
+Without real lamps, the app can be tried with the emulator: `tools/lamp-emulator/`.
 
-1. Нажать кнопку поиска. Найденные лампы появятся в списке. Если лампа не нашлась (бывает, когда
-   роутер не пропускает multicast), добавить её кнопкой «+» по IP-адресу.
-2. Включить переключатель у ламп, которые должны участвовать в подсветке.
-3. Включить «Ambient Light» и разрешить запись экрана.
+## First start
 
-При обновлении с версии 0.7 сохранённый список ламп не читается: формат хранения изменился. Нужно
-один раз нажать поиск и заново включить лампы.
+1. Press the search button. The lamps found show up in the list. If a lamp isn't found (it
+   happens when the router blocks multicast), add it with the "+" button by its IP address.
+2. Turn on the switch of every lamp that should take part in the light.
+3. Turn on "Ambient Light" and allow the screen capture.
 
-### Телефоны Xiaomi и другие с жёсткой экономией батареи
+### Xiaomi phones and others with aggressive battery saving
 
-MIUI и похожие прошивки при свайпе из «недавних» убивают процесс приложения вместе с подсветкой.
-Разрешение на запись экрана при этом теряется, и подсветку приходится включать заново. Чтобы
-подсветка работала в фоне, в настройках приложения:
+MIUI and similar firmware kill the app together with the light when it's swiped away from
+Recents. The screen capture permission is lost too, and the light has to be turned on again. To
+keep the light running in the background, in the app's settings:
 
-- включить «Автозапуск»;
-- «Контроль активности» → «Нет ограничений»;
-- или закрепить приложение в «недавних»: долгое нажатие на карточку → замок.
+- turn on "Autostart";
+- set "Battery saver" to "No restrictions";
+- or lock the app in Recents: long press on its card → the lock.
 
-На Android TV и обычном Android свайп подсветку не останавливает.
+On Android TV and on stock Android, a swipe doesn't stop the light.
 
-## Как это работает
+## How it works
 
-1. **Захват.** `ScreenCapture` получает экран через MediaProjection в уменьшенном виде, кадром
-   160×90 для экрана 16:9: уменьшает сама система, приложение не копирует полный кадр. Каждые
-   300 мс (по умолчанию, меняется в настройках) берётся последний кадр.
-2. **Цвет.** `ColorExtractor` находит доминирующий цвет всего кадра (Palette, по каждому пикселю)
-   и передаёт его дальше, только если он заметно отличается от предыдущего (разница ΔE по CIE76
-   больше 2.5 по умолчанию), чтобы не отправлять лампам лишние команды.
-3. **Отправка.** У каждой лампы свой `LampController`. Цвета схлопываются: если новый цвет пришёл,
-   пока предыдущий ждёт отправки, уходит только новый. Смена цвета — плавная, 300 мс по умолчанию.
+1. **Capture.** `ScreenCapture` gets the screen through MediaProjection, scaled down to a
+   160×90 frame for a 16:9 screen. The system scales it, so the app never copies a full-size
+   picture. Every 300 ms (by default, set in the settings) the newest frame is taken.
+2. **Color.** `ColorExtractor` finds the dominant color of the whole frame (Palette, over every
+   pixel) and passes it on only if it differs noticeably from the previous one (CIE76 ΔE above
+   2.5 by default), so the lamps get no needless commands.
+3. **Sending.** Every lamp has its own `LampController`. Colors are collapsed: if a new color
+   comes while the previous one still waits to be sent, only the new one goes. The color changes
+   smoothly, over 300 ms by default.
 
-Ограничения ламп по спецификации Yeelight (`doc/Yeelight_Inter-Operation_Spec.pdf`):
+Lamp limits, from the Yeelight spec (`docs/Yeelight_Inter-Operation_Spec.pdf`):
 
-- не больше 60 команд в минуту на одно соединение — после 60 команд соединение открывается заново;
-- не больше 144 команд в минуту на лампу в сумме, то есть одна в 417 мс, а цвета идут раз в 300 мс;
-  при долгой динамичной сцене лампа может пропустить часть цветов;
-- в music mode этих ограничений нет.
+- at most 60 commands a minute on one connection: after 60 commands the connection is opened
+  again;
+- at most 144 commands a minute per lamp in total, that is one per 417 ms, while colors come
+  every 300 ms; in a long busy scene a lamp may skip some colors;
+- music mode has none of these limits.
 
-Если связь с лампой пропала, соединение восстанавливается само при следующем цвете, не чаще раза в
-5 секунд.
+If the connection to a lamp is lost, it's opened again with the next color, at most once in
+5 seconds.
 
-## Устройство
+## Log
 
-| Пакет | Что |
-|---|---|
-| `com.ambient.yeelight` | `AmbientLightApp`: общий журнал `logger`, запись падений в журнал |
-| `.network` | `Discovery` — поиск ламп; `Connection` — протокол поверх одного TCP-соединения; `Commands` — команды и формат строки; `LampController` — работа с одной лампой: сохранение и восстановление состояния, music mode, лимиты, переподключение; `Device`, `LampState` — данные |
-| `.service` | `AmbientService` — foreground-сервис подсветки; `ScreenCapture` — захват экрана; `ColorExtractor` — доминирующий цвет и фильтр изменений; `CIE76ColorDistanceCalculator` |
-| `.common` | `Settings` — сохранённые лампы; `Logger`; `Utils` |
-| `.ui` | `MainActivity`, `DeviceListAdapter`; `SettingsActivity` — экран настроек; `LogActivity` — экран журнала |
+The app writes to `files/logs/ambient_light.log`; a debug build also writes to logcat. At 2 MB
+the file becomes `ambient_light.log.1`, the old `.1` is deleted, and a new file starts, so the
+log keeps the latest 2 to 4 MB. A debug build also writes debug messages (for example, the ΔE of
+every new color); a release build starts at INFO.
 
-## Журнал
+The log screen opens from the settings with the "Log" button:
 
-Приложение пишет в `files/logs/ambient_light.log` и в logcat. При 2 МБ файл становится
-`ambient_light.log.1`, прежний `.1` удаляется, и начинается новый файл: хранится от 2 до 4 МБ
-последней истории. В debug-сборке пишутся и отладочные сообщения (например, ΔE каждого нового
-цвета), в release — начиная с INFO.
+- the last 500 lines of the current file;
+- "Save": both files as a zip to Downloads; from there it can be copied to a USB stick. On
+  Android 9 the app asks for storage access on the first save;
+- "Send": the same zip by mail, a messenger or a cloud drive, whatever the device has;
+- "Clear": deletes both files.
 
-Экран журнала открывается из настроек кнопкой «Журнал»:
-
-- последние 500 строк текущего файла;
-- «Сохранить» — оба файла zip-архивом в «Загрузки», оттуда его можно скопировать на флешку.
-  На Android 9 приложение при первом сохранении попросит доступ к памяти;
-- «Отправить» — тот же архив через почту, мессенджер или облако, что есть на устройстве;
-- «Очистить» — удалить оба файла.
-
-Посмотреть журнал на компьютере без экрана журнала (debug-сборка):
+To read the log on a computer without the log screen (debug build):
 
 ```
 adb shell run-as com.ambient.yeelight cat files/logs/ambient_light.log
 ```
 
-## Что ещё в работе
+## Plans
 
-- яркость лампы по яркости картинки, приглушение в тёмных сценах;
-- сервис: статус, обновление уведомления, изменения списка ламп без перезапуска подсветки;
-- баннер для лаунчера Android TV;
-- разные зоны экрана для разных ламп;
-- другие лампы, кроме Yeelight, например по USB;
-- на будущее: плагин для VLC и приложение для Windows, чтобы подсветка работала и в играх.
+- **Brightness from the picture.** Now the lamps' brightness is fixed, from the settings. It
+  should follow the picture and dim in dark scenes. What's known:
+  - a lamp takes only the hue from `set_rgb`, the brightness is set by `bright`: dark grey
+    looks white on a strip;
+  - the most common color of a frame is often the black bars or a frame around the picture,
+    not the picture itself;
+  - the CIE76 formula here scales lightness by 2.55, so dark colors flicker through the ΔE
+    filter. Try on a real strip what changes without the factor: the filter should stop passing
+    changes of brightness alone, and dark scenes should get calmer. The emulator can't show it.
+    For now the factor stays: with it the light works well enough.
+- **Screen zones.** Each lamp takes the color of its own part of the screen: the left lamp the
+  left part, the right one the right part.
+- **Command limit.** Count the 60-command limit over the last 60 seconds instead of the whole
+  life of a connection, so a connection isn't reopened in calm scenes. Only matters for lamps
+  without music mode.
+- **Other lamps.** A common lamp interface, so the light works not only with Yeelight, for
+  example with an LED strip over USB.
+- **Later:** a VLC plugin for Windows, and a Windows app that captures the whole screen, so the
+  light works in games and any player.
 
-Подробный план — в `PLAN.md`.
+## License
 
-## Лицензия
-
-MIT, см. `LICENSE`.
+MIT, see `LICENSE`.

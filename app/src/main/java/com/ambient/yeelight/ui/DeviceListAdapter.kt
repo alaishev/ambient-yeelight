@@ -16,7 +16,7 @@ import com.ambient.yeelight.network.Device
  * @param onRemoveRequest called when the user long-clicks a lamp
  */
 class DeviceListAdapter(
-    private val onEnabledChange: (device: Device, used: Boolean) -> Unit,
+    private val onEnabledChange: (device: Device, enabled: Boolean) -> Unit,
     private val onRemoveRequest: (device: Device) -> Unit,
 ) : RecyclerView.Adapter<DeviceListAdapter.LampViewHolder>() {
     private var devices: List<Device> = emptyList()
@@ -51,10 +51,10 @@ class DeviceListAdapter(
         binding.lampTitle.text = title
         binding.lampDetails.text =
             context.getString(R.string.dot_separated, device.host, context.getString(statusId))
-        binding.usedSwitch.isChecked = device.used
-        binding.lampIcon.isActivated = device.used // Picks the icon's color
+        binding.enabledSwitch.isChecked = device.enabled
+        binding.lampIcon.isActivated = device.enabled // Picks the icon's color
         binding.root.setOnClickListener {
-            onEnabledChange(device, !device.used)
+            onEnabledChange(device, !device.enabled)
         }
         binding.root.setOnLongClickListener {
             onRemoveRequest(device)
@@ -62,7 +62,7 @@ class DeviceListAdapter(
         }
     }
 
-    /** Shows [devices]; [online] holds the [Device.key]s of the lamps that answer. */
+    /** Shows the lamps; online holds the keys of the lamps that answer. */
     @SuppressLint("NotifyDataSetChanged") // The whole list changes: a search, an added lamp
     fun update(devices: List<Device>, online: Set<String>) {
         this.devices = devices

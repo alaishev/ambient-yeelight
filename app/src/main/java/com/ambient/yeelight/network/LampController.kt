@@ -16,19 +16,19 @@ import java.net.ServerSocket
 import java.net.SocketTimeoutException
 
 /**
- * Drives one lamp, [device], for the ambient light:
- * - [start] saves what the lamp shows, turns it on, moves to music mode if the lamp supports it
- *   and sets the brightness;
- * - [setColor] then sets the colors;
- * - [stop] leaves music mode, brings the saved state back and closes the connection.
+ * Runs the ambient light on one lamp:
+ * - start() remembers what the lamp shows, turns it on, moves to music mode if the lamp can, and
+ *   sets the brightness;
+ * - setColor() then sends the colors;
+ * - stop() leaves music mode, gives the lamp its old state back and closes the connection.
  *
- * Commands go at least commandIntervalMs apart, a new color fades in over transitionMs. A lost
- * connection is opened again on the next command, at most once per [RECONNECT_DELAY_MS]. In music
- * mode the lamp takes commands with no limit; if music mode fails, the controller keeps to usual
- * connections. A usual connection is opened anew once it has sent [Connection.MAX_COMMANDS], the
- * lamp's limit for one connection.
+ * Commands go at least commandIntervalMs apart; a new color fades in over transitionMs. If the
+ * connection is lost, the next command opens a new one, but not more often than once in
+ * RECONNECT_DELAY_MS. In music mode the lamp takes any number of commands. If music mode doesn't
+ * work, the controller uses usual connections and opens a new one after every MAX_COMMANDS
+ * commands, the lamp's limit for one connection.
  *
- * [start] works in the background; [stop] suspends until the lamp has its state back. All the
+ * start() works in the background; stop() waits until the lamp has its old state back. All the
  * methods can be called from any thread.
  */
 class LampController(
@@ -41,19 +41,20 @@ class LampController(
     private val colors = Channel<Int>(Channel.CONFLATED)
 
     @Volatile
-    private var connection: Connection? = null // close() closes it from any thread
+    private var connection: Connection? = null // Volatile: close() may run on another thread
 
-    // Used by the coroutines of start() and stop(), which run one after the other
+    // Used only by the coroutines of start() and stop(), and they run one after the other
     private var lastSentTime = 0L // SystemClock.elapsedRealtime() of the last command
-    private var retryTime = 0L // No connection attempt before this time
-    private var musicModeOn = false // connect() opens connections in music mode
-    private var musicModeFailed = false // The lamp did not turn music mode on; do not ask again
+    private var nextConnectTime = 0L // Don't try to connect before this time, after a failure
+    private var useMusicMode = false // connect() opens connections in music mode
+    private var musicModeFailed = false // The lamp refused music mode; don't ask again
     private var savedState: LampState? = null // What the lamp showed before start()
-    private var colorSender: Job? = null // Set by start(), ends after stop()
+    private var colorSender: Job? = null // The coroutine of start(); it ends after stop()
 
     /**
      * Starts the ambient light on the lamp, in the background: saves its state and turns it on,
-     * moves to music mode, sets the brightness, then sends the colors from setColor until stop.
+     * moves to music mode, sets the brightness, then sends the colors from setColor() until
+     * stop().
      */
     fun start() {
         colorSender = scope.launch {
@@ -66,14 +67,14 @@ class LampController(
         }
     }
 
-    /** Sets the lamp's color, `0xRRGGBB`, without waiting; a newer color replaces a waiting one. */
+    /** Sends a color, 0xRRGGBB, without waiting. A color still waiting to go is replaced by it. */
     fun setColor(color: Int) {
         colors.trySend(color)
     }
 
     /**
-     * Ends the ambient light and returns when it is done: a waiting color still goes, then the
-     * lamp leaves music mode, gets back what it showed before [start], and the connection closes.
+     * Ends the ambient light and returns when it's done: a waiting color still goes, then the lamp
+     * leaves music mode, gets back what it showed before start(), and the connection closes.
      */
     suspend fun stop() {
         colors.close()
@@ -83,14 +84,14 @@ class LampController(
         close()
     }
 
-    /** Closes the connection at once, leaving the lamp as it is now. */
-    fun close() {
+    /** Closes the connection at once and leaves the lamp as it is. */
+    private fun close() {
         colors.close()
         scope.cancel()
         connection?.close()
     }
 
-    /** Reads what the lamp shows into [savedState] and turns the lamp on if it is off. */
+    /** Remembers what the lamp shows and turns the lamp on if it's off. */
     private suspend fun saveStateAndTurnOn() {
         val props = send(Commands.GET_PROP, LampState.PROPS, reply = true) ?: return
         val state = LampState.from(props)
@@ -102,26 +103,26 @@ class LampController(
         }
     }
 
-    /** Moves to music mode now, if the lamp supports it; in music mode the lamp does not reply. */
+    /** Moves to music mode now, if the lamp can. In music mode the lamp doesn't answer commands. */
     private suspend fun startMusicMode() {
-        if (!device.musicMode) return
+        if (!device.supportsMusicMode) return
 
-        musicModeOn = true
+        useMusicMode = true
         connection?.close()
         connection = connect() // In music mode, or a usual one if the lamp refuses
     }
 
-    /** Leaves music mode: closing the lamp's connection turns it off. */
+    /** Leaves music mode: the lamp turns it off when its music connection closes. */
     private fun stopMusicMode() {
-        if (!musicModeOn) return
+        if (!useMusicMode) return
 
-        musicModeOn = false
+        useMusicMode = false
         connection?.close()
     }
 
     /**
-     * Brings back [savedState]: turns the lamp off if it was off, else its color and brightness.
-     * Does nothing if the state was not saved.
+     * Gives the lamp back what it showed before: turns it off if it was off, otherwise brings back
+     * its color and brightness. Does nothing if the state wasn't saved.
      */
     private suspend fun restoreState() {
         val state = savedState ?: return
@@ -147,9 +148,9 @@ class LampController(
     }
 
     /**
-     * Sends a command on an open connection, after the pause commandIntervalMs needs; with
-     * [reply], waits for the lamp's reply and returns its result. Returns null if the lamp cannot
-     * be reached or the command fails, and then a later call reconnects.
+     * Sends a command, waiting first so commands stay commandIntervalMs apart. With reply, waits
+     * for the lamp's answer and returns its result. Returns null if the lamp can't be reached or
+     * the command fails; the next call then connects again.
      */
     private suspend fun send(
         method: String,
@@ -159,6 +160,7 @@ class LampController(
         val current = connect() ?: return null
 
         connection = current
+        // A negative delay returns at once: the pause is already over
         delay(lastSentTime + commandIntervalMs - SystemClock.elapsedRealtime())
         try {
             val result = if (reply) {
@@ -180,9 +182,9 @@ class LampController(
     }
 
     /**
-     * The connection to send on: [connection] while it is open and has commands left, else a new
-     * one, in music mode if it works, and the old one is closed. Null if the lamp cannot be
-     * reached now.
+     * The connection to send on: the current one while it's open and has commands left. Otherwise
+     * closes it and opens a new one, in music mode if we use it. Null if the lamp can't be reached
+     * right now.
      */
     private suspend fun connect(): Connection? {
         val current = connection
@@ -196,43 +198,45 @@ class LampController(
 
         val now = SystemClock.elapsedRealtime()
 
-        if (now < retryTime) return null
+        if (now < nextConnectTime) return null
 
         try {
             return openMusicMode() ?: openConnection(device)
         }
         catch (e: IOException) {
             logger.e(TAG, "${device.host}: cannot connect -> $e")
-            retryTime = now + RECONNECT_DELAY_MS
+            nextConnectTime = now + RECONNECT_DELAY_MS
             return null
         }
     }
 
     /**
-     * Opens a music mode connection: over a usual connection, asks the lamp to connect to a server
-     * socket of ours. Null if music mode is off or the lamp has failed to turn it on; then the
-     * caller opens a usual connection. Throws IOException if the lamp cannot be reached.
+     * Opens a music mode connection: over a usual connection, asks the lamp to connect back to a
+     * server socket of ours. Null if we don't use music mode or the lamp refused it; the caller
+     * then opens a usual connection. Throws IOException if the lamp can't be reached.
      */
     private suspend fun openMusicMode(): Connection? {
-        if (!musicModeOn || musicModeFailed) return null
+        if (!useMusicMode || musicModeFailed) return null
 
         val control = openConnection(device)
+        var server: ServerSocket? = null
 
         try {
-            ServerSocket(0).use { server ->
-                val params = listOf(1, control.localAddress.hostAddress, server.localPort)
+            server = ServerSocket(0) // Any free port; the lamp connects to it
 
-                server.soTimeout = MUSIC_ACCEPT_TIMEOUT_MS
-                if (control.sendRequest(Commands.SET_MUSIC, params) != null) {
-                    logger.i(TAG, "${device.host}: music mode on")
-                    return acceptConnection(device, server)
-                }
+            val params = listOf(1, control.localAddress.hostAddress, server.localPort)
+
+            server.soTimeout = MUSIC_ACCEPT_TIMEOUT_MS
+            if (control.sendRequest(Commands.SET_MUSIC, params) != null) {
+                logger.i(TAG, "${device.host}: music mode on")
+                return acceptConnection(device, server)
             }
         }
         catch (e: SocketTimeoutException) {
             logger.w(TAG, "${device.host}: did not connect for music mode -> $e")
         }
         finally {
+            server?.close() // The accepted connection lives on without the server
             control.close()
         }
 
