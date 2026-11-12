@@ -1,63 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.cardview.widget.CardView xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- One lamp: the whole card takes the focus and the clicks, the switch only shows the state -->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
+    style="?attr/materialCardViewFilledStyle"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    app:cardBackgroundColor="@android:color/white"
-    app:cardCornerRadius="8dp"
-    app:cardPreventCornerOverlap="false"
-    app:cardUseCompatPadding="true">
+    android:layout_height="wrap_content"
+    android:layout_marginVertical="4dp"
+    android:clickable="true"
+    android:focusable="true"
+    app:strokeColor="@color/lamp_card_stroke"
+    app:strokeWidth="2dp">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:orientation="horizontal">
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="16dp">
 
         <ImageView
-            android:layout_width="75dp"
-            android:layout_height="match_parent"
-            android:contentDescription="Device Image"
-            android:src="@drawable/yeelight_color" />
+            android:id="@+id/lamp_icon"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="16dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_lamp_24"
+            app:tint="@color/lamp_icon_tint" />
 
         <LinearLayout
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:layout_gravity="center_vertical"
-            android:orientation="vertical"
-            android:padding="10dp">
+            android:layout_weight="1"
+            android:orientation="vertical">
 
             <TextView
-                android:id="@+id/device_model"
+                android:id="@+id/lamp_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Yeelight"
-                android:textColor="@color/purple_200" />
+                android:textAppearance="?attr/textAppearanceTitleMedium" />
 
             <TextView
-                android:id="@+id/device_location"
+                android:id="@+id/lamp_details"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Location: 192.168.0.2:55443" />
-
-            <TextView
-                android:id="@+id/device_status"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Model: color" />
-
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorOnSurfaceVariant" />
         </LinearLayout>
 
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/used_switch"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:clickable="false"
+            android:focusable="false" />
     </LinearLayout>
-
-    <Switch
-        android:id="@+id/ambient_switch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center_vertical|end"
-        android:scaleX="1.5"
-        android:scaleY="1.5"
-        android:layout_marginEnd="16dp"
-        tools:ignore="UseSwitchCompatOrMaterialXml" />
-
-</androidx.cardview.widget.CardView>
+</com.google.android.material.card.MaterialCardView>

@@ -6,14 +6,14 @@ import com.ambient.yeelight.logger
 
 /**
  * Finds the dominant color of screen frames and passes it on only when it changes noticeably, so
- * the lamps get no commands for changes the eye does not see.
+ * the lamps get no commands for changes the eye does not see: by more than minDeltaE, CIE76.
  */
-class ColorExtractor {
+class ColorExtractor(private val minDeltaE: Float) {
     private var lastColor = BLACK // The last color returned by nextColor()
 
     /**
      * The dominant color of [frame], `0xRRGGBB`, if it differs from the last one returned by more
-     * than [MIN_DELTA_E]; null if it does not, or if the frame is black.
+     * than minDeltaE; null if it does not, or if the frame is black.
      */
     fun nextColor(frame: Bitmap): Int? {
         val color = dominantColor(frame)
@@ -24,7 +24,7 @@ class ColorExtractor {
             val deltaE = CIE76ColorDistanceCalculator.getColorDistance(color, lastColor)
 
             logger.d(TAG, "Color ${"%06X".format(color)}, deltaE $deltaE")
-            if (deltaE <= MIN_DELTA_E) return null
+            if (deltaE <= minDeltaE) return null
         }
 
         lastColor = color
@@ -45,6 +45,5 @@ class ColorExtractor {
         const val TAG = "ColorExtractor"
         const val BLACK = 0x000000
         const val RGB_MASK = 0xFFFFFF // Drops the alpha
-        const val MIN_DELTA_E = 2.5 // CIE76; about the smallest difference the eye sees
     }
 }

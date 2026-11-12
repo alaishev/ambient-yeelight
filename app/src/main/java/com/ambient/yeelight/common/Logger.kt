@@ -14,7 +14,8 @@ import java.util.Locale
 /**
  * The app's logger; writes to logcat, a file, or both.
  *
- * The file is started anew once it reaches [MAX_SIZE], with the system info at its top.
+ * Once the file reaches MAX_SIZE, it becomes the previous file, its name with ".1", in place of
+ * the older one, and a new file starts. Each new file has the system info at its top.
  *
  * @param minLevel messages below it are dropped
  * @param logcat write to logcat
@@ -38,6 +39,14 @@ class Logger(
         appendLine("Model (and Product): ${Build.MODEL} (${Build.PRODUCT})")
         append("App version: ${BuildConfig.VERSION_NAME}")
     }
+
+    /** The log files that exist, the previous one first: for saving or sending them. */
+    val files: List<File>
+        get() {
+            val file = file ?: return emptyList()
+
+            return listOf(previousFile(file), file).filter { it.exists() }
+        }
 
     init {
         if (file != null) {
@@ -65,6 +74,17 @@ class Logger(
         log(Level.ERROR, tag, message, throwable)
     }
 
+    /** Deletes both log files; the next message starts a new one. */
+    @Synchronized
+    fun clear() {
+        val file = file ?: return
+
+        writer?.close()
+        writer = null
+        previousFile(file).delete()
+        file.delete()
+    }
+
     private fun log(level: Level, tag: String, message: String, throwable: Throwable?) {
         if (level < minLevel) return
 
@@ -79,13 +99,24 @@ class Logger(
         }
     }
 
-    /** Writes one entry to the file; starts a new file first if it is missing, empty or too big. */
+    /**
+     * Writes one entry to the file. A full file becomes the previous one first; a missing or empty
+     * file gets the system info at its top.
+     */
     @Synchronized
     private fun write(file: File, level: Level, tag: String, message: String, trace: String?) {
         val thread = Thread.currentThread().name.padEnd(28) // Fits "DefaultDispatcher-worker-12"
 
         try {
-            if (!file.exists() || file.length() == 0L || file.length() >= MAX_SIZE) {
+            if (file.length() >= MAX_SIZE) {
+                writer?.close()
+                // Replaces the older previous file; if the rename fails, the history is dropped
+                if (!file.renameTo(previousFile(file))) {
+                    file.delete()
+                }
+            }
+
+            if (!file.exists() || file.length() == 0L) {
                 open(file)
                 writer?.apply {
                     append(sysInfo)
@@ -109,11 +140,11 @@ class Logger(
         }
     }
 
-    /** Opens the file for appending, or truncates it if it is too big. */
+    /** Opens the file for appending. */
     private fun open(file: File) {
         try {
             writer?.close()
-            writer = FileOutputStream(file, file.length() < MAX_SIZE).bufferedWriter()
+            writer = FileOutputStream(file, true).bufferedWriter()
         }
         catch (e: IOException) {
             writer = null
@@ -121,9 +152,11 @@ class Logger(
         }
     }
 
+    private fun previousFile(file: File): File = File("${file.path}.1")
+
     companion object {
         private const val TAG = "Logger"
-        const val MAX_SIZE: Long = 10L * 1024 * 1024 // The log file's size limit, bytes
+        const val MAX_SIZE: Long = 2L * 1024 * 1024 // One log file's size limit, bytes
 
         private fun priority(level: Level): Int = when (level) {
             Level.DEBUG -> Log.DEBUG

@@ -14,7 +14,7 @@ android {
         minSdk = 28
         targetSdk = 36
         versionCode = 9
-        versionName = "0.8.1"
+        versionName = "0.9.0"
     }
 
     buildTypes {
@@ -48,4 +48,6 @@ dependencies {
     implementation(libs.androidx.activity.ktx)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.palette)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.recyclerview)
 }

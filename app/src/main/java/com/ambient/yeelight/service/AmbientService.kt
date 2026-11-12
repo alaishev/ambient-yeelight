@@ -50,7 +50,8 @@ enum class AmbientState {
 class AmbientService : Service() {
     private lateinit var settings: Settings
     private lateinit var capture: ScreenCapture
-    private val colorExtractor = ColorExtractor() // Used on the capture's thread only
+    // Made when the light starts, then used on the capture's thread only
+    private lateinit var colorExtractor: ColorExtractor
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val lampsLock = Mutex() // One updateLamps() at a time
 
@@ -59,6 +60,11 @@ class AmbientService : Service() {
 
     @Volatile
     private var lastColor: Int? = null // Set on the capture's thread; new lamps start with it
+
+    // Read from the settings when the light starts; a change waits for the next start
+    private var colorIntervalMs = Settings.DEFAULT_COLOR_INTERVAL_MS
+    private var transitionMs = Settings.DEFAULT_TRANSITION_MS
+    private var brightness = Settings.DEFAULT_BRIGHTNESS
 
     override fun onBind(intent: Intent): IBinder? = null
 
@@ -119,7 +125,11 @@ class AmbientService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
         )
 
-        if (permission == null || !capture.start(permission, COLOR_INTERVAL_MS)) {
+        colorIntervalMs = settings.colorIntervalMs
+        transitionMs = settings.transitionMs
+        brightness = settings.brightness
+        colorExtractor = ColorExtractor(settings.minDeltaE)
+        if (permission == null || !capture.start(permission, colorIntervalMs)) {
             mutableState.value = AmbientState.FAILED
             stopSelf()
             return
@@ -155,7 +165,7 @@ class AmbientService : Service() {
             val keptDevices = kept.map { lamp -> lamp.device }
             val started = chosen
                 .filter { device -> device !in keptDevices }
-                .map { device -> LampController(device) }
+                .map { device -> LampController(device, colorIntervalMs, transitionMs, brightness) }
 
             lamps = kept // The removed lamps get no more colors while they stop
             stopLamps(removed)
@@ -185,7 +195,7 @@ class AmbientService : Service() {
     private fun createChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Ambient light",
+            getString(R.string.notification_channel),
             NotificationManager.IMPORTANCE_LOW,
         )
 
@@ -194,18 +204,23 @@ class AmbientService : Service() {
 
     /** The service's notification: the number of lamps, a tap opens the app, a stop button. */
     private fun notification(): Notification {
-        val text = if (lamps.isEmpty()) "No lamps chosen" else "Lamps: ${lamps.size}"
+        val text = if (lamps.isEmpty()) {
+            getString(R.string.notification_no_lamps)
+        }
+        else {
+            resources.getQuantityString(R.plurals.notification_lamps, lamps.size, lamps.size)
+        }
         val open = Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val stop = Intent(this, AmbientService::class.java).setAction(ACTION_STOP)
         val flags = PendingIntent.FLAG_IMMUTABLE
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_light_bulb_icon)
-            .setContentTitle("Ambient light is on")
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(getString(R.string.notification_title))
             .setContentText(text)
             .setContentIntent(PendingIntent.getActivity(this, 0, open, flags))
-            .addAction(0, "Stop", PendingIntent.getService(this, 0, stop, flags))
+            .addAction(0, getString(R.string.stop), PendingIntent.getService(this, 0, stop, flags))
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setOngoing(true)
             .setShowWhen(false)
@@ -219,7 +234,6 @@ class AmbientService : Service() {
         private const val EXTRA_PERMISSION = "permission" // The capture permission, an Intent
         private const val CHANNEL_ID = "service_channel"
         private const val NOTIFICATION_ID = 2024
-        private const val COLOR_INTERVAL_MS = 330L // How often a frame is captured
 
         private val mutableState = MutableStateFlow(AmbientState.STOPPED)
 

@@ -1,3 +1,72 @@
 <resources>
-    <string name="app_name">Ambient YeeLight</string>
+    <string name="app_name" translatable="false">Ambient YeeLight</string>
+
+    <!-- Main screen -->
+    <string name="ambient_light">Ambient Light</string>
+    <string name="lamps">Lamps</string>
+    <string name="search_lamps">Search lamps</string>
+    <string name="add_lamp">Add a lamp by IP address</string>
+    <plurals name="lamps_found">
+        <item quantity="one">Found %d lamp</item>
+        <item quantity="other">Found %d lamps</item>
+    </plurals>
+    <string name="lamp_added">Lamp added</string>
+    <string name="lamp_not_answering">The lamp does not answer</string>
+
+    <!-- Add lamp dialog -->
+    <string name="add_lamp_title">Add a lamp</string>
+    <string name="ip_address">IP address</string>
+    <string name="add">Add</string>
+    <string name="invalid_address">Enter an IP address like 192.168.1.10</string>
+    <string name="lamp_in_list">This lamp is already in the list</string>
+
+    <!-- Lamp list -->
+    <string name="dot_separated" translatable="false">%1$s · %2$s</string>
+    <string name="lamp_online">online</string>
+    <string name="lamp_offline">offline</string>
+    <string name="remove_lamp_title">Remove the lamp?</string>
+    <string name="remove_lamp_message">%1$s will be removed from the list. If it is online, a search finds it again.</string>
+    <string name="remove">Remove</string>
+
+    <!-- Notification -->
+    <string name="notification_channel">Ambient Light</string>
+    <string name="notification_title">Ambient Light is on</string>
+    <string name="notification_no_lamps">No lamps chosen</string>
+    <plurals name="notification_lamps">
+        <item quantity="one">%d lamp</item>
+        <item quantity="other">%d lamps</item>
+    </plurals>
+    <string name="stop">Stop</string>
+
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="back">Back</string>
+    <string name="color_interval">Interval</string>
+    <string name="color_interval_hint">How often the screen is captured and the lamps get a color</string>
+    <string name="min_delta_e">Color threshold</string>
+    <string name="min_delta_e_hint">How much the color must change before the lamps get it; lower is more sensitive</string>
+    <string name="transition">Transition</string>
+    <string name="transition_hint">How long a lamp fades to a new color</string>
+    <string name="brightness">Brightness</string>
+    <string name="brightness_hint">How bright the lamps shine in the ambient light</string>
+    <string name="value_ms">%1$d ms</string>
+    <string name="value_percent" translatable="false">%1$d%%</string>
+    <string name="value_delta_e" translatable="false">ΔE %1$.1f</string>
+    <string name="settings_apply_note">Changes take effect the next time the ambient light is turned on</string>
+    <string name="reset_defaults">Defaults</string>
+
+    <!-- Log -->
+    <string name="log">Log</string>
+    <string name="log_empty">The log is empty</string>
+    <string name="clear_log">Clear</string>
+    <string name="clear_log_title">Clear the log?</string>
+    <string name="clear_log_message">Both log files will be deleted.</string>
+    <string name="save_log">Save</string>
+    <string name="log_saved">Saved to Downloads: %1$s</string>
+    <string name="log_not_saved">Cannot save the log</string>
+    <string name="log_save_no_permission">Saving the log needs access to the storage</string>
+    <string name="send_log">Send</string>
+    <string name="log_subject">Ambient YeeLight log</string>
+    <string name="log_not_sent">Cannot prepare the log</string>
+    <string name="no_app_to_send">No app to send the log; save it instead</string>
 </resources>

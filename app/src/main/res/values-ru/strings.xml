@@ -1,0 +1,71 @@
+<resources>
+    <!-- Main screen -->
+    <string name="ambient_light">Подсветка</string>
+    <string name="lamps">Лампы</string>
+    <string name="search_lamps">Искать лампы</string>
+    <string name="add_lamp">Добавить лампу по IP-адресу</string>
+    <plurals name="lamps_found">
+        <item quantity="one">Найдена %d лампа</item>
+        <item quantity="few">Найдено %d лампы</item>
+        <item quantity="many">Найдено %d ламп</item>
+        <item quantity="other">Найдено %d лампы</item>
+    </plurals>
+    <string name="lamp_added">Лампа добавлена</string>
+    <string name="lamp_not_answering">Лампа не отвечает</string>
+
+    <!-- Add lamp dialog -->
+    <string name="add_lamp_title">Добавить лампу</string>
+    <string name="ip_address">IP-адрес</string>
+    <string name="add">Добавить</string>
+    <string name="invalid_address">Введите IP-адрес, например 192.168.1.10</string>
+    <string name="lamp_in_list">Эта лампа уже в списке</string>
+
+    <!-- Lamp list -->
+    <string name="lamp_online">в сети</string>
+    <string name="lamp_offline">не в сети</string>
+    <string name="remove_lamp_title">Удалить лампу?</string>
+    <string name="remove_lamp_message">%1$s будет удалена из списка. Если она в сети, поиск найдёт её снова.</string>
+    <string name="remove">Удалить</string>
+
+    <!-- Notification -->
+    <string name="notification_channel">Подсветка</string>
+    <string name="notification_title">Подсветка включена</string>
+    <string name="notification_no_lamps">Лампы не выбраны</string>
+    <plurals name="notification_lamps">
+        <item quantity="one">%d лампа</item>
+        <item quantity="few">%d лампы</item>
+        <item quantity="many">%d ламп</item>
+        <item quantity="other">%d лампы</item>
+    </plurals>
+    <string name="stop">Остановить</string>
+
+    <!-- Settings -->
+    <string name="settings">Настройки</string>
+    <string name="back">Назад</string>
+    <string name="color_interval">Интервал</string>
+    <string name="color_interval_hint">Как часто захватывается экран и лампы получают цвет</string>
+    <string name="min_delta_e">Порог цвета</string>
+    <string name="min_delta_e_hint">Насколько должен измениться цвет, чтобы лампы его получили; меньше — чувствительнее</string>
+    <string name="transition">Переход</string>
+    <string name="transition_hint">Сколько длится плавный переход лампы к новому цвету</string>
+    <string name="brightness">Яркость</string>
+    <string name="brightness_hint">Насколько ярко светят лампы при подсветке</string>
+    <string name="value_ms">%1$d мс</string>
+    <string name="settings_apply_note">Изменения действуют при следующем включении подсветки</string>
+    <string name="reset_defaults">По умолчанию</string>
+
+    <!-- Log -->
+    <string name="log">Журнал</string>
+    <string name="log_empty">Журнал пуст</string>
+    <string name="clear_log">Очистить</string>
+    <string name="clear_log_title">Очистить журнал?</string>
+    <string name="clear_log_message">Оба файла журнала будут удалены.</string>
+    <string name="save_log">Сохранить</string>
+    <string name="log_saved">Сохранено в «Загрузки»: %1$s</string>
+    <string name="log_not_saved">Не удалось сохранить журнал</string>
+    <string name="log_save_no_permission">Для сохранения журнала нужен доступ к памяти</string>
+    <string name="send_log">Отправить</string>
+    <string name="log_subject">Журнал Ambient YeeLight</string>
+    <string name="log_not_sent">Не удалось подготовить журнал</string>
+    <string name="no_app_to_send">Нет приложения для отправки, сохраните журнал</string>
+</resources>

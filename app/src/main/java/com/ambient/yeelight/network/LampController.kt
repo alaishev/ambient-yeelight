@@ -17,19 +17,26 @@ import java.net.SocketTimeoutException
 
 /**
  * Drives one lamp, [device], for the ambient light:
- * - [start] saves what the lamp shows, turns it on and moves to music mode if the lamp supports it;
+ * - [start] saves what the lamp shows, turns it on, moves to music mode if the lamp supports it
+ *   and sets the brightness;
  * - [setColor] then sets the colors;
  * - [stop] leaves music mode, brings the saved state back and closes the connection.
  *
- * Commands go at least [COMMAND_INTERVAL_MS] apart. A lost connection is opened again on the next
- * command, at most once per [RECONNECT_DELAY_MS]. In music mode the lamp takes commands with no
- * limit; if music mode fails, the controller keeps to usual connections. A usual connection is
- * opened anew once it has sent [Connection.MAX_COMMANDS], the lamp's limit for one connection.
+ * Commands go at least commandIntervalMs apart, a new color fades in over transitionMs. A lost
+ * connection is opened again on the next command, at most once per [RECONNECT_DELAY_MS]. In music
+ * mode the lamp takes commands with no limit; if music mode fails, the controller keeps to usual
+ * connections. A usual connection is opened anew once it has sent [Connection.MAX_COMMANDS], the
+ * lamp's limit for one connection.
  *
  * [start] works in the background; [stop] suspends until the lamp has its state back. All the
  * methods can be called from any thread.
  */
-class LampController(val device: Device) {
+class LampController(
+    val device: Device,
+    private val commandIntervalMs: Long,
+    private val transitionMs: Int,
+    private val brightness: Int, // Percent, for the whole ambient light
+) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val colors = Channel<Int>(Channel.CONFLATED)
 
@@ -46,14 +53,15 @@ class LampController(val device: Device) {
 
     /**
      * Starts the ambient light on the lamp, in the background: saves its state and turns it on,
-     * moves to music mode, then sends the colors from [setColor] until [stop].
+     * moves to music mode, sets the brightness, then sends the colors from setColor until stop.
      */
     fun start() {
         colorSender = scope.launch {
             saveStateAndTurnOn()
             startMusicMode()
+            send(Commands.SET_BRIGHT, listOf(brightness, Commands.SMOOTH, FADE_MS))
             for (color in colors) {
-                send(Commands.SET_RGB, listOf(color, Commands.SMOOTH, TRANSITION_MS))
+                send(Commands.SET_RGB, listOf(color, Commands.SMOOTH, transitionMs))
             }
         }
     }
@@ -139,7 +147,7 @@ class LampController(val device: Device) {
     }
 
     /**
-     * Sends a command on an open connection, after the pause [COMMAND_INTERVAL_MS] needs; with
+     * Sends a command on an open connection, after the pause commandIntervalMs needs; with
      * [reply], waits for the lamp's reply and returns its result. Returns null if the lamp cannot
      * be reached or the command fails, and then a later call reconnects.
      */
@@ -151,7 +159,7 @@ class LampController(val device: Device) {
         val current = connect() ?: return null
 
         connection = current
-        delay(lastSentTime + COMMAND_INTERVAL_MS - SystemClock.elapsedRealtime())
+        delay(lastSentTime + commandIntervalMs - SystemClock.elapsedRealtime())
         try {
             val result = if (reply) {
                 current.sendRequest(method, params)
@@ -237,12 +245,6 @@ class LampController(val device: Device) {
         const val TAG = "LampController"
         const val RECONNECT_DELAY_MS = 5_000L
         const val MUSIC_ACCEPT_TIMEOUT_MS = 3_000 // How long the lamp may take to connect to us
-        // Up to 3 colors a second, as often as the screen is captured; more makes no visible
-        // difference. On a usual connection a lamp takes 144 commands per minute (Yeelight
-        // Inter-Operation Specification), so a long run of color changes may lose a few there;
-        // the color filter in ColorExtractor makes it rare
-        const val COMMAND_INTERVAL_MS = 330L
-        const val TRANSITION_MS = 300 // How long a lamp fades to a new color
         const val FADE_MS = 500 // How long a lamp fades on start and when its state comes back
     }
 }

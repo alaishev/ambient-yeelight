@@ -1,5 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.AmbientLight" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.AmbientLight" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/lavender</item>
+        <!-- The system bars match the screen, not the theme's primary color -->
+        <item name="android:statusBarColor">?android:attr/colorBackground</item>
+        <item name="android:navigationBarColor">?android:attr/colorBackground</item>
+        <item name="materialIconButtonStyle">@style/Widget.AmbientLight.IconButton</item>
+    </style>
+
+    <!-- A bigger icon, so it does not look small next to a switch; the button stays 48dp -->
+    <style name="Widget.AmbientLight.IconButton" parent="Widget.Material3.Button.IconButton">
+        <item name="iconSize">32dp</item>
+    </style>
 </resources>

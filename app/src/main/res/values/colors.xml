@@ -7,4 +7,7 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- Tone 70 of the Material3 baseline purple, a step darker than the dark theme's primary -->
+    <color name="lavender">#FFB69DF8</color>
+    <color name="ic_launcher_background">#FF13121A</color> <!-- The icon picture's background -->
 </resources>

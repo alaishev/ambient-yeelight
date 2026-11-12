@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The notification's icon: the system draws only its shape, in one color. The app icon's TV:
+    the screen in a frame, the stand, the glow above it.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- The frame; the screen inside it stays empty -->
+    <path
+        android:fillColor="@android:color/white"
+        android:fillType="evenOdd"
+        android:pathData="M3.5,7h17a1.5,1.5 0,0 1,1.5 1.5v8a1.5,1.5 0,0 1,-1.5 1.5h-17a1.5,1.5 0,0 1,-1.5 -1.5v-8a1.5,1.5 0,0 1,1.5 -1.5zM4,9v7h16V9z" />
+    <!-- The stand -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M11,18h2v1.5h-2zM7.5,19.5h9v1.5h-9z" />
+    <!-- The glow -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M11.25,2h1.5v3.5h-1.5zM4.4,3.9L5.5,2.9L7.9,5.5L6.8,6.5zM19.6,3.9L18.5,2.9L16.1,5.5L17.2,6.5z" />
+</vector>

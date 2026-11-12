@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A lamp in the ambient light glows in the theme's color, one out of it is grey -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:color="?attr/colorPrimary" android:state_activated="true" />
+    <item android:color="?attr/colorOnSurfaceVariant" />
+</selector>
