@@ -34,6 +34,7 @@ about three times a second.
 
 ## Limitations
 
+- **TVs.** The app works only on TVs and set-top boxes with Android TV.
 - **Protected video.** Apps with copy protection (DRM), such as Netflix, block screen capture.
   The system gives the app a black frame instead of their picture, and the lamps keep their last
   color. The light works with video that has no such protection: YouTube, file players,
@@ -43,6 +44,13 @@ about three times a second.
 
 In the Yeelight app, turn on **LAN Control** for every lamp. Without it a lamp doesn't answer the
 search and doesn't take commands. The TV and the lamps must be in the same network.
+
+## Installing
+
+The app isn't on Google Play. Download the APK from
+[Releases](https://github.com/alaishev/ambient-yeelight/releases) and install it by hand: copy it
+to the TV on a USB stick and open it in a file manager (the TV asks to allow installing from
+unknown sources), or install it over the network with `adb`, see below.
 
 ## Building
 
@@ -72,8 +80,9 @@ Without real lamps, the app can be tried with the emulator: `tools/lamp-emulator
 
 ## First start
 
-1. Press the search button. The lamps found show up in the list. If a lamp isn't found (it
-   happens when the router blocks multicast), add it with the "+" button by its IP address.
+1. Press the search button (the button with a round arrow). The lamps found show up in the
+   list. If a lamp isn't found (it happens when the router blocks multicast), add it with the
+   "+" button by its IP address.
 2. Turn on the switch of every lamp that should take part in the light.
 3. Turn on "Ambient Light" and allow the screen capture.
 
